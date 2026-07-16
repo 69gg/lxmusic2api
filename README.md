@@ -2,8 +2,6 @@
 
 把 LX Music Desktop 的在线搜索、歌单、排行榜、评论、歌词、封面、跨平台匹配与自定义源 URL 解析能力，整理为无 GUI 的私有 HTTP API 服务。
 
-作者：Null <pylindex@qq.com>
-
 > [!IMPORTANT]
 > 本项目仅用于技术学习与可行性研究，不提供音乐、不内置音频源，也不保证第三方数据或链接的合法性、准确性。使用前必须阅读 [Apache-2.0](./LICENSE) 与 [LX Music 补充协议](./LICENSES/LX-MUSIC-ADDITIONAL-zh-CN.txt)，遵守当地法律、非商业要求，并在 24 小时内清除使用过程中产生的版权数据。服务会将其管理的已下载文件在配置的 1–24 小时内自动清理。
 
