@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
+    "allowJs": true,
+    "checkJs": false,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@app/*": ["src/*"],
+      "@common/*": ["src/common/*"],
+      "@renderer/*": ["src/renderer/*"]
+    },
+    "types": ["node"]
+  },
+  "include": ["src", "scripts", "test", "*.config.ts"],
+  "exclude": ["dist", "node_modules", "coverage"]
+}

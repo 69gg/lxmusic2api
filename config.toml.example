@@ -1,0 +1,87 @@
+# lxmusic2api 配置示例。
+# 复制为 config.toml 后再修改；config.toml 已加入 Git 忽略。
+# 所有相对路径均相对于本配置文件所在目录解析。
+
+[legal]
+# 必须阅读仓库中的 LICENSE 与 LICENSES/LX-MUSIC-ADDITIONAL-zh-CN.txt 后显式设为 true。
+accept_lx_music_terms = false
+
+[server]
+host = "127.0.0.1"
+port = 3000
+docs_enabled = true
+trust_proxy = false
+body_limit_bytes = 2097152
+request_timeout_ms = 30000
+
+[server.cors]
+# API 默认不允许跨域；启用后必须明确列出来源，不能使用通配符。
+enabled = false
+origins = []
+
+[auth]
+# 至少 32 个字符；示例值不可用于启动。
+api_key = "REPLACE_WITH_A_RANDOM_SECRET_OF_AT_LEAST_32_CHARACTERS"
+
+[paths]
+database = "./data/lxmusic2api.sqlite"
+downloads = "./downloads"
+
+[network]
+# 支持 http:// 或 https:// 代理；留空表示直连。
+proxy_url = ""
+connect_timeout_ms = 10000
+request_timeout_ms = 15000
+# 音频代理与下载的整次传输超时。
+audio_timeout_ms = 3600000
+max_redirects = 5
+# 直连模式会固定并复检实际连接 IP，缓存时间越短越能及时响应 DNS 变更。
+dns_cache_ttl_ms = 10000
+max_response_bytes = 8388608
+# 默认阻止自定义源请求环回、内网、链路本地和云元数据地址。
+block_private_networks = true
+# 仅填写确实需要放行的精确主机名；不要用它替代全局私网保护。
+allow_private_hosts = []
+
+[music]
+default_quality = "320k"
+allow_source_fallback = false
+# 开启跨平台匹配时，最多尝试的候选歌曲数。
+max_fallback_candidates = 5
+
+[custom_source]
+# 唯一启用的自定义源。脚本不会通过 API 暴露；建议放在已忽略的 .private 目录。
+script_path = "./.private/custom-source.js"
+max_script_bytes = 1048576
+init_timeout_ms = 10000
+action_timeout_ms = 20000
+memory_limit_mb = 64
+stack_limit_kb = 1024
+max_http_requests = 8
+
+[download]
+max_concurrent = 3
+# 单个音频文件上限，默认 1 GiB。
+max_file_bytes = 1073741824
+file_name_template = "{name} - {singer}"
+# 可选：skip、overwrite、rename。
+existing_file = "skip"
+save_lrc = false
+save_word_by_word_lyric = true
+save_translated_lyric = false
+save_romanized_lyric = false
+embed_cover = true
+embed_lyric = false
+# 上游补充协议要求版权数据在 24 小时内清除，只允许 1 到 24。
+retention_hours = 24
+cleanup_interval_minutes = 15
+# 下载进度写入 SQLite 的最小间隔。
+progress_update_ms = 1000
+
+[rate_limit]
+enabled = true
+max = 120
+window_ms = 60000
+
+[logging]
+level = "info"

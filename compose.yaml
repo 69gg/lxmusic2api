@@ -1,0 +1,16 @@
+services:
+  lxmusic2api:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+      - ./.private:/app/.private:ro
+      - ./data:/app/data
+      - ./downloads:/app/downloads
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

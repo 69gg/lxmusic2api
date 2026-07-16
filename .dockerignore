@@ -1,0 +1,11 @@
+.git
+.gitignore
+node_modules
+dist
+coverage
+config.toml
+.private
+.private-fixtures
+data
+downloads
+*.log

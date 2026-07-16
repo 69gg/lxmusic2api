@@ -1,0 +1,59 @@
+{
+  "name": "lxmusic2api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "基于 LX Music 在线能力改造的无 GUI 私有 API 服务",
+  "type": "module",
+  "author": {
+    "name": "Null",
+    "email": "pylindex@qq.com"
+  },
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.19.0",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "dev": "node --watch --import tsx src/index.ts",
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:compat": "node --import tsx scripts/test-custom-source.ts",
+    "docs:generate": "node --import tsx scripts/generate-openapi.ts",
+    "licenses:check": "license-checker-rseidelsohn --production --excludePrivatePackages --onlyAllow \"MIT;ISC;Apache-2.0;BSD-3-Clause;BlueOak-1.0.0;(MIT OR WTFPL);(BSD-2-Clause OR MIT OR Apache-2.0)\" --summary"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.1.0",
+    "@fastify/rate-limit": "^10.3.0",
+    "@fastify/swagger": "^9.5.2",
+    "@fastify/swagger-ui": "^5.2.3",
+    "@fastify/type-provider-typebox": "^6.1.0",
+    "better-sqlite3": "^12.9.0",
+    "fastify": "^5.7.4",
+    "js-toml": "^1.1.0",
+    "node-id3": "^0.2.9",
+    "quickjs-emscripten": "^0.32.0",
+    "typebox": "^1.0.62",
+    "undici": "^8.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.19.15",
+    "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^9.39.2",
+    "globals": "^17.3.0",
+    "license-checker-rseidelsohn": "4.4.2",
+    "tsx": "^4.21.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.54.0",
+    "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "esbuild": "0.28.1"
+  }
+}
