@@ -24,6 +24,8 @@ Fastify /v1 路由
 
 平台请求、签名、结果整理和歌词解码尽量保持 LX Music 原有实现。新的适配层只替换 Electron 请求、IPC/native 歌词解码和 GUI 状态依赖，并把平台返回值转换成稳定的 `Track` DTO。旧模块包含可取消的单例请求状态，因此服务按“平台 + 功能”串行化同类调用，避免并发请求互相取消；不同平台和不同功能仍可并行。
 
+普通 API 的完整路由生命周期受 `server.request_timeout_ms` 限制。Fastify 到达截止时间后返回 HTTP 504，并通过原生 `request.signal` 取消平台请求、URL/DNS 安全检查和自定义源解析；客户端提前断开时使用同一条取消链路。音频代理和下载文件使用更长的 `network.audio_timeout_ms`，不会被普通 API 时限截断。
+
 ## 自定义源隔离
 
 配置脚本运行在独立 Worker 中的 QuickJS WASM 上下文。兼容面固定为 LX 自定义源 API v2：`window.lx`/`lx`、`EVENT_NAMES`、`request`、`send`、`on`、Buffer/crypto/zlib、计时器、`version=2.0.0` 和 `env=desktop`。

@@ -1,10 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
 
-export const createRequestSignal = (request: FastifyRequest, reply: FastifyReply): AbortSignal => {
-  const controller = new AbortController()
-  request.raw.once('aborted', () => controller.abort(new Error('客户端中断了请求')))
-  reply.raw.once('close', () => {
-    if (!reply.raw.writableFinished) controller.abort(new Error('客户端关闭了连接'))
-  })
-  return controller.signal
-}
+/**
+ * 保留旧的内部辅助函数签名；Fastify 5.10 的原生信号同时覆盖客户端断开和 handler 超时。
+ */
+export const createRequestSignal = (request: FastifyRequest, _reply: FastifyReply): AbortSignal => request.signal

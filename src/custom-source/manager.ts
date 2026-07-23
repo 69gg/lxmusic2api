@@ -276,7 +276,7 @@ export class CustomSourceManager {
     if (typeof result !== 'string' || result.length > 2048 || !/^https?:\/\//.test(result)) {
       throw new AppError('CUSTOM_SOURCE_INVALID_RESPONSE', 502, '自定义源未返回有效 HTTP(S) 音乐地址')
     }
-    await assertConfiguredSafeUrl(result)
+    await assertConfiguredSafeUrl(result, signal)
     return {
       url: result,
       requestedQuality: requested,

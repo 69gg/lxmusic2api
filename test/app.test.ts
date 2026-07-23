@@ -1,15 +1,17 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildApp } from '@app/app'
+import { ProviderService } from '@app/provider/service'
 import { createTestConfig, TEST_TRACK } from './helpers'
 
 const applications: FastifyInstance[] = []
 const directories: string[] = []
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(applications.splice(0).map(application => application.close()))
   await Promise.all(directories.splice(0).map(directory => fs.rm(directory, { recursive: true, force: true })))
 })
@@ -104,5 +106,42 @@ lx.send(lx.EVENT_NAMES.inited, {
     })
     expect(response.body).not.toContain('仅用于自动化测试的源')
     expect(response.body).not.toContain('synthetic')
+  })
+
+  it('路由超过配置时限时返回 504 并中止上游工作', async () => {
+    const directory = await createDirectory()
+    const config = createTestConfig(directory)
+    config.server.request_timeout_ms = 25
+    const aborted = vi.fn()
+    vi.spyOn(ProviderService.prototype, 'searchTracks').mockImplementation(async (
+      _query,
+      _source,
+      _page,
+      _limit,
+      signal,
+    ): Promise<never> => {
+      if (!signal) throw new Error('缺少请求取消信号')
+      signal.throwIfAborted()
+      return new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          aborted()
+          reject(signal.reason instanceof Error ? signal.reason : new Error('请求已取消'))
+        }, { once: true })
+      })
+    })
+
+    const app = await buildApp(config)
+    applications.push(app)
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/search/tracks?q=test&source=all&page=1&limit=20',
+      headers: { authorization: `Bearer ${config.auth.api_key}` },
+    })
+
+    expect(response.statusCode, response.body).toBe(504)
+    expect(response.json()).toMatchObject({
+      error: { code: 'REQUEST_TIMEOUT', message: '请求处理超时' },
+    })
+    expect(aborted).toHaveBeenCalledOnce()
   })
 })

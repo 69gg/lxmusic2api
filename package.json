@@ -32,7 +32,7 @@
     "@fastify/swagger-ui": "^5.2.3",
     "@fastify/type-provider-typebox": "^6.1.0",
     "better-sqlite3": "^12.9.0",
-    "fastify": "^5.7.4",
+    "fastify": "^5.10.0",
     "js-toml": "^1.1.0",
     "node-id3": "^0.2.9",
     "quickjs-emscripten": "^0.32.0",

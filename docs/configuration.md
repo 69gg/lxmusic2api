@@ -10,10 +10,12 @@
 - `auth.api_key`：唯一 Bearer 密钥，至少 32 个字符；示例占位符会被拒绝。
 - `server.host/port`：监听地址。Docker 中通常把 host 改为 `0.0.0.0`。
 - `server.docs_enabled`：是否提供 `/docs`。文档本身不包含自定义源信息。
+- `server.request_timeout_ms`：普通 API 的入站读取与完整路由处理时限；超时返回 HTTP 504，并中止仍在运行的上游请求。音频流与下载文件改用 `network.audio_timeout_ms`。
 - `server.cors`：默认关闭；开启时必须给出明确的 HTTP(S) Origin，不接受通配符。
 - `paths.database`：SQLite 数据库。
 - `paths.downloads`：受服务管理并会自动删除文件的临时下载目录。
 - `network.proxy_url`：可选 HTTP(S) 代理。
+- `network.request_timeout_ms`：单次普通上游请求的总时限，包含 URL/DNS 安全检查、连接和响应体读取。
 - `network.block_private_networks`：默认阻止自定义源和重定向访问环回、私网、链路本地、保留网段与云元数据地址。
 - `network.allow_private_hosts`：只有明确需要时才允许指定主机；这是安全边界的主动放宽。
 - `network.dns_cache_ttl_ms`：直连时固定并复检实际连接 IP 的缓存时间；配置代理后，代理自身及其 DNS 解析成为额外信任边界。

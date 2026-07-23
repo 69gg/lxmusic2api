@@ -11,7 +11,6 @@ import type { DownloadService } from '@app/download/service'
 import { openHttpStream } from '@app/network/http-client'
 import type { MusicUrlService } from '@app/music/url-service'
 import type { ProviderService } from '@app/provider/service'
-import { createRequestSignal } from './request-signal.js'
 import {
   CommentReplyParamsSchema,
   CommentsBodySchema,
@@ -94,27 +93,27 @@ export const registerApiRoutes = (app: FastifyInstance, services: ApiServices): 
 
   server.get('/search/tracks', {
     schema: secureSchema({ tags: ['search'], summary: '搜索歌曲', querystring: SearchQuerySchema, response: jsonResponses(JsonObjectSchema) }),
-  }, async (request, reply) => {
-    const signal = createRequestSignal(request, reply)
+  }, async request => {
+    const signal = request.signal
     return { data: await providers.searchTracks(request.query.q, request.query.source ?? 'all', request.query.page ?? 1, request.query.limit ?? 20, signal) }
   })
 
   server.get('/search/playlists', {
     schema: secureSchema({ tags: ['search'], summary: '搜索歌单', querystring: SearchQuerySchema, response: jsonResponses(JsonObjectSchema) }),
-  }, async (request, reply) => {
-    const signal = createRequestSignal(request, reply)
+  }, async request => {
+    const signal = request.signal
     return { data: await providers.searchPlaylists(request.query.q, request.query.source ?? 'all', request.query.page ?? 1, request.query.limit ?? 20, signal) }
   })
 
   server.get('/search/hot', {
     schema: secureSchema({ tags: ['search'], summary: '获取热门搜索', querystring: SourceQuerySchema, response: jsonResponses(JsonObjectSchema) }),
-  }, async (request, reply) => ({
-    data: await providers.getHotSearch(request.query.source ?? 'all', createRequestSignal(request, reply)),
+  }, async request => ({
+    data: await providers.getHotSearch(request.query.source ?? 'all', request.signal),
   }))
 
   server.get('/playlists/:source/tags', {
     schema: secureSchema({ tags: ['playlists'], summary: '获取歌单标签', params: SourceParamsSchema, response: jsonResponses(JsonObjectSchema) }),
-  }, async (request, reply) => ({ data: await providers.getPlaylistTags(request.params.source, createRequestSignal(request, reply)) }))
+  }, async request => ({ data: await providers.getPlaylistTags(request.params.source, request.signal) }))
 
   server.get('/playlists/:source', {
     schema: secureSchema({
@@ -126,10 +125,10 @@ export const registerApiRoutes = (app: FastifyInstance, services: ApiServices): 
       }, { additionalProperties: false }),
       response: jsonResponses(JsonObjectSchema),
     }),
-  }, async (request, reply) => ({
+  }, async request => ({
     data: await providers.getPlaylists(
       request.params.source, request.query.tagId ?? '', request.query.sortId ?? '', request.query.page ?? 1,
-      createRequestSignal(request, reply),
+      request.signal,
     ),
   }))
 
@@ -139,13 +138,13 @@ export const registerApiRoutes = (app: FastifyInstance, services: ApiServices): 
       querystring: Type.Object({ page: Type.Optional(Type.Integer({ minimum: 1, maximum: 100000, default: 1 })) }, { additionalProperties: false }),
       response: jsonResponses(JsonObjectSchema),
     }),
-  }, async (request, reply) => ({
-    data: await providers.getPlaylistDetail(request.params.source, request.params.id, request.query.page ?? 1, createRequestSignal(request, reply)),
+  }, async request => ({
+    data: await providers.getPlaylistDetail(request.params.source, request.params.id, request.query.page ?? 1, request.signal),
   }))
 
   server.get('/leaderboards/:source', {
     schema: secureSchema({ tags: ['leaderboards'], summary: '获取排行榜', params: SourceParamsSchema, response: jsonResponses(JsonObjectSchema) }),
-  }, async (request, reply) => ({ data: await providers.getLeaderboards(request.params.source, createRequestSignal(request, reply)) }))
+  }, async request => ({ data: await providers.getLeaderboards(request.params.source, request.signal) }))
 
   server.get('/leaderboards/:source/:id', {
     schema: secureSchema({
@@ -153,24 +152,24 @@ export const registerApiRoutes = (app: FastifyInstance, services: ApiServices): 
       querystring: Type.Object({ page: Type.Optional(Type.Integer({ minimum: 1, maximum: 100000, default: 1 })) }, { additionalProperties: false }),
       response: jsonResponses(JsonObjectSchema),
     }),
-  }, async (request, reply) => ({
-    data: await providers.getLeaderboardDetail(request.params.source, request.params.id, request.query.page ?? 1, createRequestSignal(request, reply)),
+  }, async request => ({
+    data: await providers.getLeaderboardDetail(request.params.source, request.params.id, request.query.page ?? 1, request.signal),
   }))
 
   server.post('/tracks/lyrics', {
     schema: secureSchema({ tags: ['tracks'], summary: '获取歌词', body: TrackBodySchema, response: jsonResponses(JsonObjectSchema) }),
-  }, async (request, reply) => ({ data: await providers.getLyrics(request.body.track, createRequestSignal(request, reply)) }))
+  }, async request => ({ data: await providers.getLyrics(request.body.track, request.signal) }))
 
   server.post('/tracks/cover', {
     schema: secureSchema({ tags: ['tracks'], summary: '获取封面地址', body: TrackBodySchema, response: jsonResponses(Type.Object({ url: Type.String() })) }),
-  }, async (request, reply) => ({ data: { url: await providers.getCover(request.body.track, createRequestSignal(request, reply)) } }))
+  }, async request => ({ data: { url: await providers.getCover(request.body.track, request.signal) } }))
 
   server.post('/tracks/comments', {
     schema: secureSchema({ tags: ['tracks'], summary: '获取评论', body: CommentsBodySchema, response: jsonResponses(JsonObjectSchema) }),
-  }, async (request, reply) => ({
+  }, async request => ({
     data: await providers.getComments(
       request.body.track, request.body.kind ?? 'latest', request.body.page ?? 1, request.body.limit ?? 20,
-      createRequestSignal(request, reply),
+      request.signal,
     ),
   }))
 
@@ -184,31 +183,32 @@ export const registerApiRoutes = (app: FastifyInstance, services: ApiServices): 
       }, { additionalProperties: false }),
       response: jsonResponses(JsonObjectSchema),
     }),
-  }, async (request, reply) => ({
+  }, async request => ({
     data: await providers.getCommentReplies(
       request.body.track, request.params.commentId, request.body.page ?? 1, request.body.limit ?? 20,
-      createRequestSignal(request, reply),
+      request.signal,
     ),
   }))
 
   server.post('/tracks/matches', {
     schema: secureSchema({ tags: ['tracks'], summary: '跨平台匹配歌曲', body: TrackBodySchema, response: jsonResponses(Type.Array(TrackSchema)) }),
-  }, async (request, reply) => ({ data: await providers.findMatches(request.body.track, createRequestSignal(request, reply)) }))
+  }, async request => ({ data: await providers.findMatches(request.body.track, request.signal) }))
 
   server.post('/tracks/resolve', {
     schema: secureSchema({ tags: ['audio'], summary: '解析直链', body: ResolveBodySchema, response: jsonResponses(JsonObjectSchema) }),
-  }, async (request, reply) => {
+  }, async request => {
     const result = await urls.resolve(
       request.body.track, request.body.quality ?? config.music.default_quality,
-      request.body.strictQuality ?? false, createRequestSignal(request, reply),
+      request.body.strictQuality ?? false, request.signal,
     )
     return { data: result }
   })
 
   server.post('/tracks/stream', {
+    handlerTimeout: config.network.audio_timeout_ms,
     schema: secureSchema({ tags: ['audio'], summary: '代理音频流', body: ResolveBodySchema }),
   }, async (request, reply) => {
-    const signal = createRequestSignal(request, reply)
+    const signal = request.signal
     const resolved = await urls.resolve(
       request.body.track, request.body.quality ?? config.music.default_quality,
       request.body.strictQuality ?? false, signal,
@@ -263,6 +263,7 @@ export const registerApiRoutes = (app: FastifyInstance, services: ApiServices): 
   })
 
   server.get('/downloads/:id/file', {
+    handlerTimeout: config.network.audio_timeout_ms,
     schema: secureSchema({ tags: ['downloads'], summary: '读取已完成的下载文件', params: IdParamsSchema }),
   }, async (request, reply) => {
     const file = await downloads.getFile(request.params.id)

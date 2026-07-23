@@ -51,7 +51,39 @@ export interface UrlSecurityOptions {
   allowedPrivateHosts: ReadonlySet<string>
 }
 
-export const assertSafeHttpUrl = async (rawUrl: string, options: UrlSecurityOptions): Promise<URL> => {
+const toError = (value: unknown, fallbackMessage: string): Error => (
+  value instanceof Error ? value : new Error(fallbackMessage, { cause: value })
+)
+
+const runWithAbortSignal = <T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> => {
+  if (!signal) return operation()
+  signal.throwIfAborted()
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = (): void => signal.removeEventListener('abort', onAbort)
+    const onAbort = (): void => {
+      cleanup()
+      reject(toError(signal.reason, '请求已取消'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    Promise.resolve().then(operation).then(
+      value => {
+        cleanup()
+        resolve(value)
+      },
+      error => {
+        cleanup()
+        reject(toError(error, 'URL 安全检查失败'))
+      },
+    )
+  })
+}
+
+export const assertSafeHttpUrl = async (
+  rawUrl: string,
+  options: UrlSecurityOptions,
+  signal?: AbortSignal,
+): Promise<URL> => {
+  signal?.throwIfAborted()
   let url: URL
   try {
     url = new URL(rawUrl)
@@ -68,7 +100,7 @@ export const assertSafeHttpUrl = async (rawUrl: string, options: UrlSecurityOpti
 
   const addresses = net.isIP(hostname)
     ? [{ address: hostname }]
-    : await dns.lookup(hostname, { all: true, verbatim: true })
+    : await runWithAbortSignal(() => dns.lookup(hostname, { all: true, verbatim: true }), signal)
   if (addresses.length === 0 || addresses.some(item => isPrivateAddress(item.address))) {
     throw new Error('禁止访问内网、环回或链路本地地址')
   }

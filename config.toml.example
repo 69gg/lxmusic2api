@@ -12,6 +12,7 @@ port = 3000
 docs_enabled = true
 trust_proxy = false
 body_limit_bytes = 2097152
+# 普通 API 的入站读取与路由处理总超时；音频流和下载文件使用 network.audio_timeout_ms。
 request_timeout_ms = 30000
 
 [server.cors]

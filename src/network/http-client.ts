@@ -157,12 +157,12 @@ export const requestBuffer = async (
   maxResponseBytes?: number,
 ): Promise<CompatibleResponse> => {
   const client = getState()
-  const url = await assertSafeHttpUrl(rawUrl, client.security)
   const timeoutSignal = AbortSignal.timeout(options.timeout ?? client.requestTimeoutMs)
   const contextSignal = getRequestSignal()
   const signal = contextSignal
     ? AbortSignal.any([timeoutSignal, contextSignal])
     : timeoutSignal
+  const url = await assertSafeHttpUrl(rawUrl, client.security, signal)
   let headers = normalizeHeaders(options.headers)
   let method = String(options.method ?? 'GET').toUpperCase()
   const maxRedirections = Math.max(0, Math.min(Number(options.follow_max ?? client.maxRedirects), 10))
@@ -182,7 +182,7 @@ export const requestBuffer = async (
     const nextLocation = Array.isArray(location) ? location[0] : location
     if (!nextLocation) break
     await response.body.dump()
-    const nextUrl = await assertSafeHttpUrl(new URL(nextLocation, currentUrl).href, client.security)
+    const nextUrl = await assertSafeHttpUrl(new URL(nextLocation, currentUrl).href, client.security, signal)
     if (nextUrl.origin !== currentUrl.origin) {
       headers = Object.fromEntries(Object.entries(headers).filter(([key]) => !['authorization', 'cookie'].includes(key.toLowerCase())))
     }
@@ -226,11 +226,11 @@ export interface HttpStreamResponse {
 
 export const openHttpStream = async (rawUrl: string, options: HttpStreamOptions = {}): Promise<HttpStreamResponse> => {
   const client = getState()
-  let currentUrl = await assertSafeHttpUrl(rawUrl, client.security)
   const timeoutSignal = AbortSignal.timeout(options.timeoutMs ?? client.audioTimeoutMs)
   const contextSignal = getRequestSignal()
   const signals = [timeoutSignal, options.signal, contextSignal].filter((signal): signal is AbortSignal => signal != null)
   const signal = AbortSignal.any(signals)
+  let currentUrl = await assertSafeHttpUrl(rawUrl, client.security, signal)
   const headers = Object.fromEntries(Object.entries(options.headers ?? {}).filter((entry): entry is [string, string] => entry[1] != null))
   const maxRedirections = Math.max(0, Math.min(options.maxRedirections ?? client.maxRedirects, 10))
 
@@ -254,13 +254,13 @@ export const openHttpStream = async (rawUrl: string, options: HttpStreamOptions 
       return { statusCode: response.statusCode, headers: response.headers, body: response.body, finalUrl: currentUrl }
     }
     await response.body.dump()
-    currentUrl = await assertSafeHttpUrl(new URL(nextLocation, currentUrl).href, client.security)
+    currentUrl = await assertSafeHttpUrl(new URL(nextLocation, currentUrl).href, client.security, signal)
   }
 }
 
-export const assertConfiguredSafeUrl = async (rawUrl: string): Promise<URL> => {
+export const assertConfiguredSafeUrl = async (rawUrl: string, signal?: AbortSignal): Promise<URL> => {
   const client = getState()
-  return assertSafeHttpUrl(rawUrl, client.security)
+  return assertSafeHttpUrl(rawUrl, client.security, signal)
 }
 
 export interface CancellableRequest<T> {

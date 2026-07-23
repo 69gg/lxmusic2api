@@ -45,6 +45,7 @@ export const buildApp = async (config: AppConfig): Promise<FastifyInstance> => {
     trustProxy: config.server.trust_proxy,
     bodyLimit: config.server.body_limit_bytes,
     requestTimeout: config.server.request_timeout_ms,
+    handlerTimeout: config.server.request_timeout_ms,
   }).withTypeProvider<TypeBoxTypeProvider>()
   app.setSerializerCompiler(() => data => JSON.stringify(data, (_key, value: unknown) => (
     typeof value === 'bigint' ? value.toString() : value
@@ -104,16 +105,24 @@ export const buildApp = async (config: AppConfig): Promise<FastifyInstance> => {
         typeof (error as { statusCode?: unknown }).statusCode === 'number'
         ? (error as { statusCode: number }).statusCode
         : 0
+      const frameworkCode = typeof error === 'object' && error !== null &&
+        typeof (error as { code?: unknown }).code === 'string'
+        ? (error as { code: string }).code
+        : ''
       const appError = error instanceof AppError
         ? error
         : validation
           ? new AppError('VALIDATION_ERROR', 400, '请求参数校验失败')
-          : frameworkStatus === 413
-            ? new AppError('REQUEST_BODY_TOO_LARGE', 413, '请求体超过大小限制')
-            : frameworkStatus === 429
-              ? new AppError('RATE_LIMITED', 429, '请求过于频繁，请稍后再试')
-              : new AppError('INTERNAL_ERROR', 500, '服务内部错误', false, { cause: error })
-      if (!(error instanceof AppError) && !validation) request.log.error({ err: error }, '请求处理失败')
+          : frameworkCode === 'FST_ERR_HANDLER_TIMEOUT'
+            ? new AppError('REQUEST_TIMEOUT', 504, '请求处理超时')
+            : frameworkStatus === 413
+              ? new AppError('REQUEST_BODY_TOO_LARGE', 413, '请求体超过大小限制')
+              : frameworkStatus === 429
+                ? new AppError('RATE_LIMITED', 429, '请求过于频繁，请稍后再试')
+                : new AppError('INTERNAL_ERROR', 500, '服务内部错误', false, { cause: error })
+      if (!(error instanceof AppError) && !validation && frameworkCode !== 'FST_ERR_HANDLER_TIMEOUT') {
+        request.log.error({ err: error }, '请求处理失败')
+      }
       if (appError.statusCode === 401) reply.header('www-authenticate', 'Bearer realm="lxmusic2api"')
       return reply.status(appError.statusCode).send({
         error: {
