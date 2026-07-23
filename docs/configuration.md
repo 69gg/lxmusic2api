@@ -10,7 +10,7 @@
 - `auth.api_key`：唯一 Bearer 密钥，至少 32 个字符；示例占位符会被拒绝。
 - `server.host/port`：监听地址。Docker 中通常把 host 改为 `0.0.0.0`。
 - `server.docs_enabled`：是否提供 `/docs`。文档本身不包含自定义源信息。
-- `server.request_timeout_ms`：普通 API 的入站读取与完整路由处理时限；超时返回 HTTP 504，并中止仍在运行的上游请求。音频流与下载文件改用 `network.audio_timeout_ms`。
+- `server.request_timeout_ms`：普通 API 的入站读取与完整路由处理时限；超时返回 HTTP 504，并通过服务自有的请求取消信号中止仍在运行的上游请求。音频流与下载文件改用 `network.audio_timeout_ms`。
 - `server.cors`：默认关闭；开启时必须给出明确的 HTTP(S) Origin，不接受通配符。
 - `paths.database`：SQLite 数据库。
 - `paths.downloads`：受服务管理并会自动删除文件的临时下载目录。

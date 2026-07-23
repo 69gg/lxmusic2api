@@ -13,6 +13,7 @@ import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
 import packageInfo from '../package.json' with { type: 'json' }
 import type { AppConfig } from '@app/config/schema'
 import { AppError } from '@app/api/errors'
+import { initializeRequestSignal } from '@app/api/request-signal'
 import { registerApiRoutes } from '@app/api/routes'
 import { AppDatabase } from '@app/database/database'
 import { CustomSourceManager } from '@app/custom-source/manager'
@@ -45,11 +46,14 @@ export const buildApp = async (config: AppConfig): Promise<FastifyInstance> => {
     trustProxy: config.server.trust_proxy,
     bodyLimit: config.server.body_limit_bytes,
     requestTimeout: config.server.request_timeout_ms,
-    handlerTimeout: config.server.request_timeout_ms,
   }).withTypeProvider<TypeBoxTypeProvider>()
   app.setSerializerCompiler(() => data => JSON.stringify(data, (_key, value: unknown) => (
     typeof value === 'bigint' ? value.toString() : value
   )))
+  app.addHook('onRequest', (request, reply, done) => {
+    initializeRequestSignal(request, reply, config.server.request_timeout_ms)
+    done()
+  })
 
   configureHttpClient(config)
   const database = new AppDatabase(config.paths.database)
