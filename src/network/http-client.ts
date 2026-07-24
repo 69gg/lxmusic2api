@@ -29,6 +29,7 @@ interface HttpClientState {
   dispatcher: Dispatcher
   requestTimeoutMs: number
   audioTimeoutMs: number
+  audioUserAgent: string
   maxRedirects: number
   maxResponseBytes: number
   security: UrlSecurityOptions
@@ -86,6 +87,7 @@ export const configureHttpClient = (config: AppConfig): void => {
     dispatcher,
     requestTimeoutMs: config.network.request_timeout_ms,
     audioTimeoutMs: config.network.audio_timeout_ms,
+    audioUserAgent: config.network.audio_user_agent,
     maxRedirects: config.network.max_redirects,
     maxResponseBytes: config.network.max_response_bytes,
     security,
@@ -232,6 +234,9 @@ export const openHttpStream = async (rawUrl: string, options: HttpStreamOptions 
   const signal = AbortSignal.any(signals)
   let currentUrl = await assertSafeHttpUrl(rawUrl, client.security, signal)
   const headers = Object.fromEntries(Object.entries(options.headers ?? {}).filter((entry): entry is [string, string] => entry[1] != null))
+  if (!Object.keys(headers).some(header => header.toLowerCase() === 'user-agent')) {
+    headers['user-agent'] = client.audioUserAgent
+  }
   const maxRedirections = Math.max(0, Math.min(options.maxRedirections ?? client.maxRedirects, 10))
 
   for (let redirectCount = 0; ; redirectCount += 1) {

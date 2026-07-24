@@ -35,6 +35,8 @@ connect_timeout_ms = 10000
 request_timeout_ms = 15000
 # 音频代理与下载的整次传输超时。
 audio_timeout_ms = 3600000
+# 音频 CDN 防盗链请求头；默认与 LX Music Desktop 下载器一致，可按音源要求调整。
+audio_user_agent = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36"
 max_redirects = 5
 # 直连模式会固定并复检实际连接 IP，缓存时间越短越能及时响应 DNS 变更。
 dns_cache_ttl_ms = 10000

@@ -92,7 +92,7 @@ Authorization: Bearer <config.toml 中的 auth.api_key>
 
 `strictQuality=false` 时会按可用质量降级。服务会先从支持该平台与音质的全部自定义源中选择，并在单源失败后自动尝试其他兼容源；只有这些源全部失败且 `music.allow_source_fallback=true` 时，才最多尝试配置数量的跨平台匹配项。响应会明确给出 `resolvedQuality`、`qualityFallbackUsed`、`sourceFallbackUsed` 与实际使用的 `track`，但不会暴露具体自定义源。
 
-直链由第三方自定义源返回，可能快速失效。服务不会缓存或通过 API 暴露自定义源脚本、名称、版本、主页、能力表或路径。
+直链由第三方自定义源返回，可能快速失效。`/tracks/stream` 与后台下载访问音频 CDN 时统一使用配置的 `network.audio_user_agent`，默认值与 LX Music Desktop 下载器一致；客户端请求中的鉴权信息不会透传给音频 CDN。服务不会缓存或通过 API 暴露自定义源脚本、名称、版本、主页、能力表或路径。
 
 ## 下载任务
 

@@ -16,6 +16,7 @@
 - `paths.downloads`：受服务管理并会自动删除文件的临时下载目录。
 - `network.proxy_url`：可选 HTTP(S) 代理。
 - `network.request_timeout_ms`：单次普通上游请求的总时限，包含 URL/DNS 安全检查、连接和响应体读取。
+- `network.audio_user_agent`：音频代理与下载访问上游 CDN 时使用的 `User-Agent`；默认与 LX Music Desktop 下载器一致，避免部分平台返回防盗链占位音频。自定义源有特殊要求时可覆盖。
 - `network.block_private_networks`：默认阻止自定义源和重定向访问环回、私网、链路本地、保留网段与云元数据地址。
 - `network.allow_private_hosts`：只有明确需要时才允许指定主机；这是安全边界的主动放宽。
 - `network.dns_cache_ttl_ms`：直连时固定并复检实际连接 IP 的缓存时间；配置代理后，代理自身及其 DNS 解析成为额外信任边界。
