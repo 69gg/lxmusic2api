@@ -10,10 +10,11 @@ Fastify /v1 路由
   |                              |
   |                              +---- 搜索、歌单、榜单、评论、歌词、封面
   |
-  +---- URL 服务 -----> 单一 QuickJS Worker -----> 受控 HTTP 桥 -----> 自定义源所访问的上游
-  |                         |                         |
-  |                         | CPU/内存/栈/超时限制    +-- URL/重定向/私网检查
-  |                         +-- 无 process/require/文件系统
+  +---- URL 服务 -----> 自定义源池 -----> 多个独立 QuickJS Worker -----> 受控 HTTP 桥
+  |                         |                     |                       |
+  |                         | 能力/音质/健康选择  | CPU/内存/栈/超时限制  +-- URL/重定向/私网检查
+  |                         |                     +-- 无 process/require/文件系统
+  |                         +-- 单源熔断与顺序回退
   |
   +---- 音频代理
   |
@@ -28,9 +29,11 @@ Fastify /v1 路由
 
 ## 自定义源隔离
 
-配置脚本运行在独立 Worker 中的 QuickJS WASM 上下文。兼容面固定为 LX 自定义源 API v2：`window.lx`/`lx`、`EVENT_NAMES`、`request`、`send`、`on`、Buffer/crypto/zlib、计时器、`version=2.0.0` 和 `env=desktop`。
+显式脚本和配置目录第一层的每个 `.js` 都运行在各自独立 Worker 中的 QuickJS WASM 上下文。兼容面固定为 LX 自定义源 API v2：`window.lx`/`lx`、`EVENT_NAMES`、`request`、`send`、`on`、Buffer/crypto/zlib、计时器、`version=2.0.0` 和 `env=desktop`。
 
-宿主不向脚本提供 Node.js `process`、`require`、模块加载、原生 `fetch`、文件系统或环境变量。脚本的网络请求只能通过消息桥回到主线程，并受超时、响应体、协议、凭据 URL、逐跳重定向和私网限制。直连模式使用 Undici DNS interceptor 固定并复检实际连接 IP，缩小 DNS 重绑定窗口；显式配置代理后，代理及其 DNS 解析属于操作者选择的额外信任边界。同步死循环由 QuickJS interrupt 中止；动作 Promise 超时后整个 Worker 熔断并终止。
+宿主不向脚本提供 Node.js `process`、`require`、模块加载、原生 `fetch`、文件系统或环境变量。脚本的网络请求只能通过消息桥回到主线程，并受超时、响应体、协议、凭据 URL、逐跳重定向和私网限制。直连模式使用 Undici DNS interceptor 固定并复检实际连接 IP，缩小 DNS 重绑定窗口；显式配置代理后，代理及其 DNS 解析属于操作者选择的额外信任边界。同步死循环由 QuickJS interrupt 中止；动作 Promise 超时后只熔断并终止对应 Worker，池内其他脚本仍可继续解析。
+
+自定义源池先按平台能力与歌曲实际音质构造候选，优先满足请求音质，再参考连续失败次数、延迟 EWMA 与稳定文件顺序逐个尝试。只有原 Track 的全部兼容脚本都失败后，URL 服务才按配置进入跨平台歌曲匹配，避免为了切换脚本而过早更换歌曲版本。
 
 隔离降低风险但不等于证明第三方脚本可信。操作者仍应审查来源，把脚本与配置作为私密文件管理，并以低权限用户运行容器或进程。
 

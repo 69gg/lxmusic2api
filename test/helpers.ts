@@ -9,6 +9,7 @@ export const createTestConfig = (directory: string): AppConfig => {
   config.paths.database = path.join(directory, 'test.sqlite')
   config.paths.downloads = path.join(directory, 'downloads')
   config.custom_source.script_path = path.join(directory, 'custom-source.js')
+  config.custom_source.directory_path = ''
   config.custom_source.init_timeout_ms = 5000
   config.custom_source.action_timeout_ms = 5000
   config.network.block_private_networks = false

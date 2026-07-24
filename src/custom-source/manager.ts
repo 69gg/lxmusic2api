@@ -1,65 +1,44 @@
 import fs from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { Worker } from 'node:worker_threads'
+import path from 'node:path'
 import type { FastifyBaseLogger } from 'fastify'
 import type { AppConfig } from '@app/config/schema'
 import { AppError } from '@app/api/errors'
-import { QUALITY_ORDER, toUpstreamTrack, type Provider, type Quality, type Track } from '@app/domain/track'
-import { assertConfiguredSafeUrl, requestBuffer, type CompatibleRequestOptions } from '@app/network/http-client'
-import { runWithRequestSignal } from '@app/network/request-context'
-import { SerialExecutor } from '@app/utils/serial-executor'
-import { parseCustomSourceMetadata } from './metadata.js'
-import type {
-  CustomSourceCapabilities,
-  MainToWorkerMessage,
-  SourceWorkerData,
-  WorkerToMainMessage,
-} from './protocol.js'
+import { QUALITY_ORDER, type Provider, type Quality, type Track } from '@app/domain/track'
+import {
+  CustomSourceInstance,
+  type CustomSourceResolution,
+  type ResolverStatus,
+} from './instance.js'
 
-type ResolverStatus = 'starting' | 'ready' | 'degraded' | 'closed'
-
-interface PendingInvocation {
-  resolve: (value: unknown) => void
-  reject: (error: Error) => void
-  timer: NodeJS.Timeout
+interface ResolutionCandidate {
+  source: CustomSourceInstance
+  resolvedQuality: Quality
+  qualityPenalty: number
+  order: number
 }
 
-const PROVIDERS = new Set<Provider>(['kw', 'kg', 'tx', 'wy', 'mg'])
-const URL_QUALITIES = new Set<Quality>(['128k', '320k', 'flac', 'flac24bit'])
+const PROVIDERS: readonly Provider[] = ['kw', 'kg', 'tx', 'wy', 'mg']
 
-const sanitizeCapabilities = (value: unknown): CustomSourceCapabilities => {
-  if (typeof value !== 'object' || value === null) throw new Error('自定义源未声明 sources')
-  const capabilities: CustomSourceCapabilities = {}
-  for (const [source, raw] of Object.entries(value)) {
-    if (!PROVIDERS.has(source as Provider) || typeof raw !== 'object' || raw === null) continue
-    const item = raw as { type?: unknown, actions?: unknown, qualitys?: unknown }
-    if (item.type !== 'music' || !Array.isArray(item.actions) || !item.actions.includes('musicUrl')) continue
-    const qualities = Array.isArray(item.qualitys)
-      ? [...new Set(item.qualitys.filter((quality): quality is Quality => URL_QUALITIES.has(quality as Quality)))]
-      : []
-    if (qualities.length > 0) capabilities[source as Provider] = { actions: ['musicUrl'], qualities }
-  }
-  if (Object.keys(capabilities).length === 0) throw new Error('自定义源不支持任何在线平台的 musicUrl')
-  return capabilities
+const qualityPenalty = (requested: Quality, resolved: Quality): number => {
+  if (requested === resolved) return 0
+  const requestedIndex = QUALITY_ORDER.indexOf(requested)
+  const resolvedIndex = QUALITY_ORDER.indexOf(resolved)
+  if (resolvedIndex >= requestedIndex) return resolvedIndex - requestedIndex
+  return QUALITY_ORDER.length + requestedIndex - resolvedIndex
 }
 
-const decodeBufferJson = (_key: string, value: unknown): unknown => {
-  if (typeof value !== 'object' || value === null) return value
-  const candidate = value as { type?: unknown, data?: unknown }
-  return candidate.type === 'Buffer' && Array.isArray(candidate.data) ? Buffer.from(candidate.data as number[]) : value
-}
+const compareCandidates = (left: ResolutionCandidate, right: ResolutionCandidate): number => (
+  left.qualityPenalty - right.qualityPenalty ||
+  left.source.consecutiveFailures - right.source.consecutiveFailures ||
+  left.source.latencyEwmaMs - right.source.latencyEwmaMs ||
+  left.order - right.order
+)
 
 export class CustomSourceManager {
   readonly #config: AppConfig
   readonly #logger: FastifyBaseLogger
-  readonly #serial = new SerialExecutor()
-  readonly #pendingInvocations = new Map<string, PendingInvocation>()
-  readonly #httpControllers = new Map<string, AbortController>()
-  #worker: Worker | undefined
+  #sources: CustomSourceInstance[] = []
   #status: ResolverStatus = 'starting'
-  #capabilities: CustomSourceCapabilities = {}
 
   public constructor(config: AppConfig, logger: FastifyBaseLogger) {
     this.#config = config
@@ -67,195 +46,54 @@ export class CustomSourceManager {
   }
 
   public get status(): ResolverStatus {
-    return this.#status
+    if (this.#status === 'closed' || this.#status === 'starting') return this.#status
+    return this.available ? 'ready' : 'degraded'
   }
 
   public get available(): boolean {
-    return this.#status === 'ready'
+    return this.#sources.some(source => source.available)
   }
 
   public providerAvailability(): Record<Provider, boolean> {
-    return Object.fromEntries([...PROVIDERS].map(provider => [provider, this.#capabilities[provider] != null])) as Record<Provider, boolean>
+    return Object.fromEntries(PROVIDERS.map(provider => [
+      provider,
+      this.#sources.some(source => source.supportsProvider(provider)),
+    ])) as Record<Provider, boolean>
   }
 
   public async initialize(): Promise<void> {
     this.#status = 'starting'
-    try {
-      const stats = await fs.stat(this.#config.custom_source.script_path)
-      if (!stats.isFile()) throw new Error('配置路径不是普通文件')
-      if (stats.size > this.#config.custom_source.max_script_bytes) throw new Error('自定义源脚本超过大小限制')
-      const script = await fs.readFile(this.#config.custom_source.script_path, 'utf8')
-      const metadata = parseCustomSourceMetadata(script)
-      const workerData: SourceWorkerData = {
-        script,
-        metadata,
-        limits: {
-          initTimeoutMs: this.#config.custom_source.init_timeout_ms,
-          actionTimeoutMs: this.#config.custom_source.action_timeout_ms,
-          memoryLimitMb: this.#config.custom_source.memory_limit_mb,
-          stackLimitKb: this.#config.custom_source.stack_limit_kb,
-          maxHttpRequests: this.#config.custom_source.max_http_requests,
-        },
+    const scripts = await this.#discoverScripts()
+    this.#sources = scripts.map(script => new CustomSourceInstance(this.#config, this.#logger, script))
+    await Promise.all(this.#sources.map(source => source.initialize()))
+    this.#status = this.available ? 'ready' : 'degraded'
+    if (scripts.length === 0) {
+      this.#logger.error('没有配置可加载的自定义源脚本，音乐 URL 解析以降级模式启动')
+    } else {
+      this.#logger.info({ configured: scripts.length, ready: this.#sources.filter(source => source.available).length }, '自定义源加载完成')
+    }
+  }
+
+  async #discoverScripts(): Promise<string[]> {
+    const scripts: string[] = []
+    const explicitPath = this.#config.custom_source.script_path
+    if (explicitPath) scripts.push(explicitPath)
+
+    const directoryPath = this.#config.custom_source.directory_path
+    if (directoryPath) {
+      try {
+        const entries = await fs.readdir(directoryPath, { withFileTypes: true })
+        const directoryScripts = entries
+          .filter(entry => entry.isFile() && path.extname(entry.name).toLowerCase() === '.js')
+          .map(entry => path.join(directoryPath, entry.name))
+          .sort((left, right) => left.localeCompare(right))
+        scripts.push(...directoryScripts)
+      } catch (error) {
+        this.#logger.error({ err: error }, '无法读取自定义源目录')
       }
-      await this.#startWorker(workerData)
-    } catch (error) {
-      this.#markDegraded(error)
     }
-  }
 
-  async #startWorker(workerData: SourceWorkerData): Promise<void> {
-    const builtWorkerUrl = new URL('./custom-source-worker.js', import.meta.url)
-    const developmentWorkerUrl = new URL('./worker.ts', import.meta.url)
-    const useBuiltWorker = existsSync(fileURLToPath(builtWorkerUrl))
-    const worker = new Worker(useBuiltWorker ? builtWorkerUrl : developmentWorkerUrl, {
-      workerData,
-      ...(useBuiltWorker ? {} : { execArgv: ['--import', 'tsx'] }),
-      resourceLimits: {
-        maxOldGenerationSizeMb: workerData.limits.memoryLimitMb + 32,
-        stackSizeMb: Math.max(1, Math.ceil(workerData.limits.stackLimitKb / 1024) + 1),
-      },
-    })
-    this.#worker = worker
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('自定义源初始化超时')), workerData.limits.initTimeoutMs + 500)
-      const handleMessage = (message: WorkerToMainMessage): void => {
-        if (message.type === 'inited') {
-          try {
-            this.#capabilities = sanitizeCapabilities(message.sources)
-            this.#status = 'ready'
-            clearTimeout(timeout)
-            resolve()
-          } catch (error) {
-            clearTimeout(timeout)
-            reject(error instanceof Error ? error : new Error(String(error)))
-          }
-        } else if (message.type === 'initError') {
-          clearTimeout(timeout)
-          reject(new Error(message.error))
-        }
-        this.#handleWorkerMessage(message)
-      }
-      worker.on('message', handleMessage)
-      worker.once('error', error => {
-        clearTimeout(timeout)
-        reject(error)
-        this.#markDegraded(error)
-      })
-      worker.once('exit', code => {
-        if (!['closed', 'degraded'].includes(this.#status) && code !== 0) {
-          this.#markDegraded(new Error(`自定义源 Worker 异常退出：${code}`))
-        }
-      })
-    }).catch(async error => {
-      await worker.terminate()
-      if (this.#worker === worker) this.#worker = undefined
-      throw error
-    })
-  }
-
-  #markDegraded(error: unknown): void {
-    this.#status = 'degraded'
-    this.#capabilities = {}
-    this.#logger.error({ err: error }, '唯一自定义源不可用，服务以降级模式启动')
-    for (const pending of this.#pendingInvocations.values()) {
-      clearTimeout(pending.timer)
-      pending.reject(new Error('自定义源运行时不可用'))
-    }
-    this.#pendingInvocations.clear()
-    for (const controller of this.#httpControllers.values()) controller.abort()
-    this.#httpControllers.clear()
-  }
-
-  #handleWorkerMessage(message: WorkerToMainMessage): void {
-    switch (message.type) {
-      case 'invokeResult': {
-        const pending = this.#pendingInvocations.get(message.id)
-        if (!pending) return
-        clearTimeout(pending.timer)
-        this.#pendingInvocations.delete(message.id)
-        if (message.ok) pending.resolve(message.result)
-        else pending.reject(new AppError('CUSTOM_SOURCE_ERROR', 502, message.error ?? '自定义源调用失败'))
-        break
-      }
-      case 'httpRequest': void this.#handleHttpRequest(message); break
-      case 'httpCancel': this.#httpControllers.get(message.id)?.abort(new Error('自定义源取消请求')); break
-      case 'updateNotice': this.#logger.warn('唯一自定义源报告了更新提示；内容未写入日志或 API'); break
-      case 'scriptError': this.#logger.warn('唯一自定义源脚本调用了 console.error；参数已丢弃'); break
-      default: break
-    }
-  }
-
-  async #handleHttpRequest(message: Extract<WorkerToMainMessage, { type: 'httpRequest' }>): Promise<void> {
-    const controller = new AbortController()
-    this.#httpControllers.set(message.id, controller)
-    try {
-      const options = JSON.parse(JSON.stringify(message.options), decodeBufferJson) as CompatibleRequestOptions
-      const configuredTimeout = this.#config.network.request_timeout_ms
-      options.timeout = Math.min(Math.max(Number(options.timeout ?? configuredTimeout), 1), 60000)
-      const response = await runWithRequestSignal(controller.signal, async () => requestBuffer(message.url, options))
-      this.#post({
-        type: 'httpResponse',
-        id: message.id,
-        ok: true,
-        payload: {
-          statusCode: response.statusCode,
-          statusMessage: response.statusMessage,
-          headers: response.headers,
-          bytes: response.bytes,
-          rawBase64: response.raw.toString('base64'),
-          body: response.body,
-        },
-      })
-    } catch (error) {
-      this.#post({
-        type: 'httpResponse',
-        id: message.id,
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    } finally {
-      this.#httpControllers.delete(message.id)
-    }
-  }
-
-  #post(message: MainToWorkerMessage): void {
-    this.#worker?.postMessage(message)
-  }
-
-  async #invoke(payload: unknown, signal?: AbortSignal): Promise<unknown> {
-    if (!this.available || !this.#worker) {
-      throw new AppError('MUSIC_RESOLVER_UNAVAILABLE', 503, '音乐 URL 解析能力当前不可用')
-    }
-    return this.#serial.run('custom-source', async () => {
-      signal?.throwIfAborted()
-      const id = randomUUID()
-      return new Promise<unknown>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          this.#pendingInvocations.delete(id)
-          const error = new AppError('CUSTOM_SOURCE_TIMEOUT', 504, '自定义源调用超时')
-          reject(error)
-          this.#markDegraded(error)
-          const worker = this.#worker
-          this.#worker = undefined
-          if (worker) void worker.terminate()
-        }, this.#config.custom_source.action_timeout_ms + 500)
-        this.#pendingInvocations.set(id, { resolve, reject, timer })
-        this.#post({ type: 'invoke', id, payload })
-      })
-    }, signal)
-  }
-
-  public selectQuality(track: Track, requested: Quality, strict: boolean): Quality {
-    const capability = this.#capabilities[track.source]
-    if (!capability) throw new AppError('SOURCE_UNSUPPORTED_BY_RESOLVER', 422, `唯一自定义源不支持 ${track.source}`)
-    const trackQualities = new Set(track.qualities.map(item => item.type))
-    const available = new Set(capability.qualities.filter(quality => trackQualities.has(quality)))
-    if (available.has(requested)) return requested
-    if (strict) throw new AppError('QUALITY_UNAVAILABLE', 422, `音质 ${requested} 不可用`)
-    const start = Math.max(0, QUALITY_ORDER.indexOf(requested))
-    const fallback = QUALITY_ORDER.slice(start).find(quality => available.has(quality)) ?? QUALITY_ORDER.find(quality => available.has(quality))
-    if (!fallback) throw new AppError('QUALITY_UNAVAILABLE', 422, '歌曲与自定义源没有共同支持的音质')
-    return fallback
+    return [...new Set(scripts.map(script => path.resolve(script)))]
   }
 
   public async resolveMusicUrl(
@@ -263,36 +101,55 @@ export class CustomSourceManager {
     requested: Quality,
     strict: boolean,
     signal?: AbortSignal,
-  ): Promise<{ url: string, requestedQuality: Quality, resolvedQuality: Quality, fallbackUsed: boolean }> {
-    const resolvedQuality = this.selectQuality(track, requested, strict)
-    const result = await this.#invoke({
-      source: track.source,
-      action: 'musicUrl',
-      info: {
-        type: resolvedQuality,
-        musicInfo: toUpstreamTrack(track),
-      },
-    }, signal)
-    if (typeof result !== 'string' || result.length > 2048 || !/^https?:\/\//.test(result)) {
-      throw new AppError('CUSTOM_SOURCE_INVALID_RESPONSE', 502, '自定义源未返回有效 HTTP(S) 音乐地址')
+  ): Promise<CustomSourceResolution> {
+    const readySources = this.#sources.filter(source => source.available)
+    if (readySources.length === 0) {
+      throw new AppError('MUSIC_RESOLVER_UNAVAILABLE', 503, '音乐 URL 解析能力当前不可用')
     }
-    await assertConfiguredSafeUrl(result, signal)
-    return {
-      url: result,
-      requestedQuality: requested,
-      resolvedQuality,
-      fallbackUsed: requested !== resolvedQuality,
+    const providerSources = readySources.filter(source => source.supportsProvider(track.source))
+    if (providerSources.length === 0) {
+      throw new AppError('SOURCE_UNSUPPORTED_BY_RESOLVER', 422, `当前自定义源均不支持 ${track.source}`)
     }
+
+    const candidates = providerSources.flatMap((source, order): ResolutionCandidate[] => {
+      try {
+        const resolvedQuality = source.selectQuality(track, requested, strict)
+        return [{ source, resolvedQuality, qualityPenalty: qualityPenalty(requested, resolvedQuality), order }]
+      } catch {
+        return []
+      }
+    }).sort(compareCandidates)
+    if (candidates.length === 0) {
+      throw new AppError('QUALITY_UNAVAILABLE', 422, strict
+        ? `当前自定义源均不支持严格音质 ${requested}`
+        : '歌曲与当前自定义源没有共同支持的音质')
+    }
+
+    const errors: unknown[] = []
+    for (const candidate of candidates) {
+      try {
+        return await candidate.source.resolveMusicUrl(track, requested, strict, signal)
+      } catch (error) {
+        signal?.throwIfAborted()
+        errors.push(error)
+      }
+    }
+    if (errors.length === 1) throw errors[0]
+    throw new AppError(
+      'ALL_CUSTOM_SOURCES_FAILED',
+      502,
+      `所有兼容自定义源均解析失败（已尝试 ${errors.length} 个）`,
+      true,
+      { cause: errors.at(-1) },
+    )
   }
 
   public async close(): Promise<void> {
     this.#status = 'closed'
-    if (this.#worker) {
-      this.#post({ type: 'dispose' })
-      await this.#worker.terminate()
-      this.#worker = undefined
-    }
-    for (const controller of this.#httpControllers.values()) controller.abort()
-    this.#httpControllers.clear()
+    const sources = this.#sources
+    this.#sources = []
+    const results = await Promise.allSettled(sources.map(source => source.close()))
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (failure) throw failure.reason
   }
 }

@@ -65,7 +65,7 @@ Authorization: Bearer <config.toml 中的 auth.api_key>
 | POST | `/v1/tracks/comments` | 最新/热门评论 |
 | POST | `/v1/tracks/comments/:commentId/replies` | 评论回复 |
 | POST | `/v1/tracks/matches` | 跨平台匹配 |
-| POST | `/v1/tracks/resolve` | 使用配置的唯一自定义源解析直链 |
+| POST | `/v1/tracks/resolve` | 使用配置的自定义源池解析直链 |
 | POST | `/v1/tracks/stream` | 解析并代理音频，支持传入 `Range` |
 | POST | `/v1/downloads` | 创建持久化下载任务，返回 202 |
 | GET | `/v1/downloads` | 下载任务分页列表，可按 `state` 过滤 |
@@ -90,7 +90,7 @@ Authorization: Bearer <config.toml 中的 auth.api_key>
 }
 ```
 
-`strictQuality=false` 时会按可用质量降级。`music.allow_source_fallback=true` 时，原平台解析失败后最多尝试配置数量的跨平台匹配项。响应会明确给出 `resolvedQuality`、`qualityFallbackUsed`、`sourceFallbackUsed` 与实际使用的 `track`。
+`strictQuality=false` 时会按可用质量降级。服务会先从支持该平台与音质的全部自定义源中选择，并在单源失败后自动尝试其他兼容源；只有这些源全部失败且 `music.allow_source_fallback=true` 时，才最多尝试配置数量的跨平台匹配项。响应会明确给出 `resolvedQuality`、`qualityFallbackUsed`、`sourceFallbackUsed` 与实际使用的 `track`，但不会暴露具体自定义源。
 
 直链由第三方自定义源返回，可能快速失效。服务不会缓存或通过 API 暴露自定义源脚本、名称、版本、主页、能力表或路径。
 

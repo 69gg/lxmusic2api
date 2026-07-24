@@ -31,6 +31,26 @@ const listen = async (app: FastifyInstance): Promise<string> => {
   return `http://127.0.0.1:${address.port}`
 }
 
+const customSourceScript = (options: {
+  name: string
+  qualities: string[]
+  url?: string
+  error?: string
+}): string => `/**
+ * @name ${options.name}
+ * @version 1.0.0
+ */
+lx.on(lx.EVENT_NAMES.request, async request => {
+  if (request.action !== 'musicUrl') throw new Error('unsupported')
+  ${options.error ? `throw new Error(${JSON.stringify(options.error)})` : `return ${JSON.stringify(options.url)}`}
+})
+lx.send(lx.EVENT_NAMES.inited, {
+  sources: {
+    kw: { type: 'music', actions: ['musicUrl'], qualitys: ${JSON.stringify(options.qualities)} },
+  },
+})
+`
+
 describe('HTTP API', () => {
   it('自定义源缺失时降级启动，并保护所有 v1 接口', async () => {
     const directory = await createDirectory()
@@ -72,7 +92,7 @@ describe('HTTP API', () => {
     }).toBe('failed')
   })
 
-  it('只从配置脚本加载唯一自定义源，API 不返回其元数据', async () => {
+  it('从显式配置脚本加载自定义源，API 不返回其元数据', async () => {
     const directory = await createDirectory()
     const config = createTestConfig(directory)
     await fs.writeFile(config.custom_source.script_path, `/**
@@ -115,6 +135,68 @@ lx.send(lx.EVENT_NAMES.inited, {
     })
     expect(response.body).not.toContain('仅用于自动化测试的源')
     expect(response.body).not.toContain('synthetic')
+  })
+
+  it('自动加载目录中的全部 JS，并按音质与健康状态选择和回退', async () => {
+    const directory = await createDirectory()
+    const sourceDirectory = path.join(directory, 'sources')
+    const config = createTestConfig(directory)
+    config.custom_source.script_path = ''
+    config.custom_source.directory_path = sourceDirectory
+    await fs.mkdir(sourceDirectory, { recursive: true })
+    await Promise.all([
+      fs.writeFile(path.join(sourceDirectory, 'a-low.js'), customSourceScript({
+        name: '低音质源',
+        qualities: ['128k'],
+        url: 'https://audio.invalid.example/low.mp3',
+      }), 'utf8'),
+      fs.writeFile(path.join(sourceDirectory, 'b-failing.js'), customSourceScript({
+        name: '故障源',
+        qualities: ['320k'],
+        error: 'synthetic failure',
+      }), 'utf8'),
+      fs.writeFile(path.join(sourceDirectory, 'c-best.js'), customSourceScript({
+        name: '最佳源',
+        qualities: ['320k', '128k'],
+        url: 'https://audio.invalid.example/best.mp3',
+      }), 'utf8'),
+      fs.writeFile(path.join(sourceDirectory, '00-ignored.txt'), customSourceScript({
+        name: '不应加载',
+        qualities: ['320k'],
+        url: 'https://audio.invalid.example/ignored.mp3',
+      }), 'utf8'),
+      fs.writeFile(path.join(sourceDirectory, 'invalid.js'), 'not a valid custom source', 'utf8'),
+    ])
+    const app = await buildApp(config)
+    applications.push(app)
+
+    const ready = await app.inject({ method: 'GET', url: '/readyz' })
+    expect(ready.json()).toMatchObject({ status: 'ready', musicUrlResolver: 'ready' })
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/tracks/resolve',
+      headers: { authorization: `Bearer ${config.auth.api_key}` },
+      payload: {
+        track: {
+          ...TEST_TRACK,
+          qualities: [
+            { type: '320k', size: null },
+            { type: '128k', size: null },
+          ],
+        },
+        quality: '320k',
+      },
+    })
+
+    expect(response.statusCode, response.body).toBe(200)
+    expect(response.json()).toMatchObject({
+      data: {
+        url: 'https://audio.invalid.example/best.mp3',
+        requestedQuality: '320k',
+        resolvedQuality: '320k',
+        qualityFallbackUsed: false,
+      },
+    })
   })
 
   it('路由超过配置时限时返回 504 并中止上游工作', async () => {

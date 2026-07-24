@@ -14,11 +14,11 @@ configureHttpClient(config)
 const source = new CustomSourceManager(config, logger.log)
 try {
   await source.initialize()
-  if (!source.available) throw new Error('唯一自定义源未通过初始化与能力声明检查')
+  if (!source.available) throw new Error('没有自定义源通过初始化与能力声明检查')
   const supportedProviders = Object.entries(source.providerAvailability())
     .filter(([, supported]) => supported)
     .map(([provider]) => provider)
-  process.stdout.write(`自定义源兼容性检查通过；支持平台：${supportedProviders.join(', ')}\n`)
+  process.stdout.write(`自定义源兼容性检查通过；汇总支持平台：${supportedProviders.join(', ')}\n`)
 } finally {
   await source.close()
   await closeHttpClient()

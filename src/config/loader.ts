@@ -110,7 +110,12 @@ export const loadConfig = (inputPath: string): LoadedConfig => {
   const configDirectory = path.dirname(configPath)
   config.paths.database = path.resolve(configDirectory, config.paths.database)
   config.paths.downloads = path.resolve(configDirectory, config.paths.downloads)
-  config.custom_source.script_path = path.resolve(configDirectory, config.custom_source.script_path)
+  if (config.custom_source.script_path) {
+    config.custom_source.script_path = path.resolve(configDirectory, config.custom_source.script_path)
+  }
+  if (config.custom_source.directory_path) {
+    config.custom_source.directory_path = path.resolve(configDirectory, config.custom_source.directory_path)
+  }
 
   return { config, configPath, configDirectory }
 }

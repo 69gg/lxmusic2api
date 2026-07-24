@@ -41,9 +41,29 @@ database = "./state/app.sqlite"
 downloads = "./music"
 [custom_source]
 script_path = "./private/source.js"
+directory_path = "./private/sources"
 `, 'utf8')
     const loaded = loadConfig(valid)
     expect(loaded.config.paths.database).toBe(path.join(directory, 'state/app.sqlite'))
     expect(loaded.config.custom_source.script_path).toBe(path.join(directory, 'private/source.js'))
+    expect(loaded.config.custom_source.directory_path).toBe(path.join(directory, 'private/sources'))
+  })
+
+  it('允许留空单文件路径并仅使用目录', async () => {
+    const directory = await temporaryDirectory()
+    const file = path.join(directory, 'directory-only.toml')
+    await fs.writeFile(file, `
+[legal]
+accept_lx_music_terms = true
+[auth]
+api_key = "a-secure-test-key-with-more-than-32-characters"
+[custom_source]
+script_path = ""
+directory_path = "./private/sources"
+`, 'utf8')
+
+    const loaded = loadConfig(file)
+    expect(loaded.config.custom_source.script_path).toBe('')
+    expect(loaded.config.custom_source.directory_path).toBe(path.join(directory, 'private/sources'))
   })
 })

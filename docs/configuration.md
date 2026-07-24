@@ -20,8 +20,9 @@
 - `network.allow_private_hosts`：只有明确需要时才允许指定主机；这是安全边界的主动放宽。
 - `network.dns_cache_ttl_ms`：直连时固定并复检实际连接 IP 的缓存时间；配置代理后，代理自身及其 DNS 解析成为额外信任边界。
 - `music.allow_source_fallback`：是否在原平台 URL 解析失败后进行跨平台匹配。
-- `custom_source.script_path`：唯一启用的 LX 自定义源脚本；无法由 API 更改。
-- `custom_source.*_timeout`、内存、栈和并发请求限制：QuickJS Worker 的隔离上限。
+- `custom_source.script_path`：可选的单个 LX 自定义源脚本；留空时不加载显式脚本。
+- `custom_source.directory_path`：可选的自定义源目录；自动加载第一层的全部普通 `.js` 文件。
+- `custom_source.*_timeout`、内存、栈和并发请求限制：分别作用于每个 QuickJS Worker 的隔离上限。
 - `download.max_concurrent/max_file_bytes`：并行数与单文件硬上限。
 - `download.existing_file`：`skip`、`overwrite` 或 `rename`。
 - `download.retention_hours`：只能是 1–24；服务不支持关闭自动清理。
@@ -31,7 +32,11 @@ Clash 等透明代理的 fake-IP 模式可能把公网域名解析到 `198.18.0.
 
 ## 自定义源故障
 
-启动时只读取 `custom_source.script_path` 指向的一个普通文件，并检查头注释、大小、初始化事件与 `musicUrl` 能力。失败时不终止服务，而是进入降级模式。运行中超时或 Worker 异常会熔断该解析器；为避免在未知状态继续执行，必须重启服务后才会重新加载。
+启动时会合并 `custom_source.script_path` 指向的显式脚本与 `custom_source.directory_path` 第一层按文件名排序的全部普通 `.js` 文件，并按绝对路径去重。若只想使用目录，应显式设置 `script_path = ""`。目录不会递归扫描，也不会加载其他扩展名或符号链接；源文件变化不会热加载，需重启服务。
+
+每个脚本都在独立 Worker 中检查头注释、文件大小、初始化事件与 `musicUrl` 能力。某个脚本初始化失败、运行超时或 Worker 异常时只熔断该脚本；只要仍有一个脚本可用，URL 解析就保持就绪。解析同一 Track 时先筛选支持对应平台且与歌曲具有共同音质的脚本，优先精确音质，再结合连续失败次数、近期响应延迟和稳定文件顺序选择；调用失败会继续尝试下一个兼容脚本。所有脚本均不可用时 `/readyz` 才显示 `degraded`。
+
+资源限制按脚本分别计算。例如目录中有 4 个脚本时，最多会创建 4 个 Worker，每个 Worker 都拥有独立的内存、栈、动作超时和 HTTP 并发上限。脚本及其路径、元数据、能力表和选择结果不会通过 API 暴露。
 
 使用以下命令在不启动 API 的情况下检查真实私有源：
 

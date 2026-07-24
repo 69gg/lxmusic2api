@@ -54,7 +54,8 @@ export const ConfigSchema = StrictObject({
     max_fallback_candidates: Type.Integer({ minimum: 1, maximum: 20 }),
   }),
   custom_source: StrictObject({
-    script_path: Type.String({ minLength: 1 }),
+    script_path: Type.String(),
+    directory_path: Type.String(),
     max_script_bytes: Type.Integer({ minimum: 1024, maximum: 8 * 1024 * 1024 }),
     init_timeout_ms: Type.Integer({ minimum: 100, maximum: 120000 }),
     action_timeout_ms: Type.Integer({ minimum: 100, maximum: 120000 }),
@@ -131,6 +132,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   custom_source: {
     script_path: './.private/custom-source.js',
+    directory_path: '',
     max_script_bytes: 1024 * 1024,
     init_timeout_ms: 10000,
     action_timeout_ms: 20000,

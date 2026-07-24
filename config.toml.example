@@ -51,8 +51,11 @@ allow_source_fallback = false
 max_fallback_candidates = 5
 
 [custom_source]
-# 唯一启用的自定义源。脚本不会通过 API 暴露；建议放在已忽略的 .private 目录。
+# 可同时配置一个显式脚本和一个脚本目录；留空表示不使用对应入口。
+# 目录只加载第一层的普通 .js 文件，并按文件名排序。建议都放在已忽略的 .private 目录。
 script_path = "./.private/custom-source.js"
+directory_path = ""
+# 以下限制分别作用于每一个脚本 Worker；加载多个脚本时总资源占用会相应增加。
 max_script_bytes = 1048576
 init_timeout_ms = 10000
 action_timeout_ms = 20000
