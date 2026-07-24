@@ -92,7 +92,15 @@ Authorization: Bearer <config.toml 中的 auth.api_key>
 
 `strictQuality=false` 时会按可用质量降级。服务先固定请求 Track 的平台，并把所有 `ready`、支持该平台且有共同音质的自定义源按音质、健康度、延迟和稳定顺序逐个尝试；解析 URL 后的 HTTP/内容鉴伪失败也属于当前源失败。只有同平台源池全部失败且 `music.allow_source_fallback=true` 时，才最多尝试配置数量的跨平台匹配项。因此选择 `wy` Track 时不会因为第一个源失败就直接发送 `kw` 版本。
 
-`/tracks/resolve` 的 JSON 响应会给出 `resolvedQuality`、`qualityFallbackUsed`、`sourceFallbackUsed` 与实际使用的 `track`，但不会暴露具体自定义源。`/tracks/stream` 成功时直接返回音频流；若所有同平台候选都无法返回可信完整音频，则返回 `AUDIO_RESPONSE_SUSPICIOUS` 或 `ALL_AUDIO_SOURCES_FAILED`，不会把占位音频当歌曲回传。
+`/tracks/resolve` 的 JSON 响应会给出 `resolvedQuality`、`qualityFallbackUsed`、`sourceFallbackUsed` 与实际使用的 `track`，但不会暴露具体自定义源。`/tracks/stream` 成功时直接返回音频流，并通过以下响应头报告最终实际采用的平台和音质：
+
+- `X-LXMusic2API-Resolved-Source`
+- `X-LXMusic2API-Requested-Quality`
+- `X-LXMusic2API-Resolved-Quality`
+- `X-LXMusic2API-Source-Fallback-Used`
+- `X-LXMusic2API-Quality-Fallback-Used`
+
+平台值为 `kw`、`kg`、`tx`、`wy` 或 `mg`，回退标记为 `true` / `false`。这些响应头只描述最终解析结果，不包含自定义源脚本名称、路径或音频直链。若所有同平台候选都无法返回可信完整音频，则返回 `AUDIO_RESPONSE_SUSPICIOUS` 或 `ALL_AUDIO_SOURCES_FAILED`，不会把占位音频当歌曲回传。
 
 直链由第三方自定义源返回，可能快速失效。`/tracks/stream` 与后台下载访问音频 CDN 时统一使用配置的 `network.audio_user_agent`，默认值与 LX Music Desktop 下载器一致；客户端请求中的鉴权信息不会透传给音频 CDN。对非 Range 完整响应，服务会用 `music.minimum_full_audio_bitrate_kbps` 和 Track 时长校验 `Content-Length`，拒绝明显过短的试听片段或防盗链占位音频；后台下载还会按最终实际字节数复检。Range/206 响应只校验 HTTP 状态与正文类型，不以分段大小误判完整歌曲。服务不会缓存或通过 API 暴露自定义源脚本、名称、版本、主页、能力表或路径。
 

@@ -280,6 +280,61 @@ lx.send(lx.EVENT_NAMES.inited, {
     expect(result.rawPayload).toEqual(goodAudio)
     expect(hits).toEqual(['/bad', '/good'])
     expect(findMatches).not.toHaveBeenCalled()
+    expect(result.headers['x-lxmusic2api-resolved-source']).toBe('kw')
+    expect(result.headers['x-lxmusic2api-requested-quality']).toBe('128k')
+    expect(result.headers['x-lxmusic2api-resolved-quality']).toBe('128k')
+    expect(result.headers['x-lxmusic2api-source-fallback-used']).toBe('false')
+    expect(result.headers['x-lxmusic2api-quality-fallback-used']).toBe('false')
+  })
+
+  it('音频流响应头报告最终降级后的音质', async () => {
+    const audio = Buffer.alloc(800_000, 1)
+    const audioServer = http.createServer((_request, response) => {
+      response.writeHead(200, {
+        'content-type': 'audio/mpeg',
+        'content-length': String(audio.length),
+      })
+      response.end(audio)
+    })
+    const baseUrl = await listenAudioServer(audioServer)
+    const directory = await createDirectory()
+    const sourceDirectory = path.join(directory, 'sources')
+    const config = createTestConfig(directory)
+    config.custom_source.script_path = ''
+    config.custom_source.directory_path = sourceDirectory
+    await fs.mkdir(sourceDirectory, { recursive: true })
+    await fs.writeFile(path.join(sourceDirectory, 'only-128k.js'), customSourceScript({
+      name: '仅 128k 音源',
+      qualities: ['128k'],
+      url: `${baseUrl}/audio`,
+    }), 'utf8')
+    const app = await buildApp(config)
+    applications.push(app)
+
+    const result = await app.inject({
+      method: 'POST',
+      url: '/v1/tracks/stream',
+      headers: { authorization: `Bearer ${config.auth.api_key}` },
+      payload: {
+        track: {
+          ...TEST_TRACK,
+          interval: '03:33',
+          qualities: [
+            { type: '320k', size: null },
+            { type: '128k', size: null },
+          ],
+        },
+        quality: '320k',
+      },
+    })
+
+    expect(result.statusCode, result.body).toBe(200)
+    expect(result.rawPayload).toEqual(audio)
+    expect(result.headers['x-lxmusic2api-resolved-source']).toBe('kw')
+    expect(result.headers['x-lxmusic2api-requested-quality']).toBe('320k')
+    expect(result.headers['x-lxmusic2api-resolved-quality']).toBe('128k')
+    expect(result.headers['x-lxmusic2api-source-fallback-used']).toBe('false')
+    expect(result.headers['x-lxmusic2api-quality-fallback-used']).toBe('true')
   })
 
   it('全部候选均返回占位音频时明确失败而不回传伪音频', async () => {
@@ -385,6 +440,11 @@ lx.send(lx.EVENT_NAMES.inited, {
     expect(hits).toHaveLength(3)
     expect(hits.slice(0, 2).every(pathname => pathname.startsWith('/wy-'))).toBe(true)
     expect(hits[2]).toMatch(/^\/kw-/)
+    expect(result.headers['x-lxmusic2api-resolved-source']).toBe('kw')
+    expect(result.headers['x-lxmusic2api-requested-quality']).toBe('128k')
+    expect(result.headers['x-lxmusic2api-resolved-quality']).toBe('128k')
+    expect(result.headers['x-lxmusic2api-source-fallback-used']).toBe('true')
+    expect(result.headers['x-lxmusic2api-quality-fallback-used']).toBe('false')
   })
 
   it('路由超过配置时限时返回 504 并中止上游工作', async () => {

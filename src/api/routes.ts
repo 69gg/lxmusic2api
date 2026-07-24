@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import fsPromises from 'node:fs/promises'
 import { Type, type TSchema } from 'typebox'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply } from 'fastify'
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
 import type { AppConfig } from '@app/config/schema'
 import { AppError } from './errors.js'
@@ -9,7 +9,7 @@ import { TrackSchema } from '@app/domain/track'
 import { CreateDownloadSchema, DownloadJobSchema } from '@app/download/types'
 import type { DownloadService } from '@app/download/service'
 import { openValidatedAudioStream } from '@app/music/audio-stream'
-import type { MusicUrlService } from '@app/music/url-service'
+import type { MusicUrlService, ResolvedMusicUrl } from '@app/music/url-service'
 import type { ProviderService } from '@app/provider/service'
 import { getRequestSignal, requestTimeoutRouteConfig } from './request-signal.js'
 import {
@@ -53,6 +53,14 @@ const jsonResponses = <T extends TSchema>(schema: T): Record<number, TSchema> =>
 const contentDisposition = (fileName: string): string => {
   const ascii = fileName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_')
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
+}
+
+const setAudioResolutionHeaders = (reply: FastifyReply, resolved: ResolvedMusicUrl): void => {
+  reply.header('x-lxmusic2api-resolved-source', resolved.track.source)
+  reply.header('x-lxmusic2api-requested-quality', resolved.requestedQuality)
+  reply.header('x-lxmusic2api-resolved-quality', resolved.resolvedQuality)
+  reply.header('x-lxmusic2api-source-fallback-used', String(resolved.sourceFallbackUsed))
+  reply.header('x-lxmusic2api-quality-fallback-used', String(resolved.qualityFallbackUsed))
 }
 
 const parseRange = (header: string | undefined, size: number): { start: number, end: number } | null => {
@@ -211,7 +219,7 @@ export const registerApiRoutes = (app: FastifyInstance, services: ApiServices): 
   }, async (request, reply) => {
     const signal = getRequestSignal(request)
     const range = typeof request.headers.range === 'string' ? request.headers.range : undefined
-    const { value: upstream } = await urls.resolveAndUse(
+    const { resolved, value: upstream } = await urls.resolveAndUse(
       request.body.track, request.body.quality ?? config.music.default_quality,
       request.body.strictQuality ?? false,
       resolved => openValidatedAudioStream(resolved.url, {
@@ -222,6 +230,7 @@ export const registerApiRoutes = (app: FastifyInstance, services: ApiServices): 
       }),
       signal,
     )
+    setAudioResolutionHeaders(reply, resolved)
     for (const header of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified'] as const) {
       const value = upstream.headers[header]
       if (value != null) reply.header(header, value)
