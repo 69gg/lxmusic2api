@@ -96,6 +96,10 @@ export class CustomSourceInstance {
     return this.#latencyEwmaMs ?? 0
   }
 
+  public recordUpstreamFailure(): void {
+    this.#consecutiveFailures += 1
+  }
+
   public supportsProvider(provider: Provider): boolean {
     return this.available && this.#capabilities[provider] != null
   }

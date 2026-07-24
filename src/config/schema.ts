@@ -53,6 +53,7 @@ export const ConfigSchema = StrictObject({
     ]),
     allow_source_fallback: Type.Boolean(),
     max_fallback_candidates: Type.Integer({ minimum: 1, maximum: 20 }),
+    minimum_full_audio_bitrate_kbps: Type.Integer({ minimum: 0, maximum: 128 }),
   }),
   custom_source: StrictObject({
     script_path: Type.String(),
@@ -131,6 +132,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     default_quality: '320k',
     allow_source_fallback: false,
     max_fallback_candidates: 5,
+    minimum_full_audio_bitrate_kbps: 16,
   },
   custom_source: {
     script_path: './.private/custom-source.js',

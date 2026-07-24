@@ -102,6 +102,16 @@ export class CustomSourceManager {
     strict: boolean,
     signal?: AbortSignal,
   ): Promise<CustomSourceResolution> {
+    return this.resolveMusicUrlWith(track, requested, strict, resolution => Promise.resolve(resolution), signal)
+  }
+
+  public async resolveMusicUrlWith<T>(
+    track: Track,
+    requested: Quality,
+    strict: boolean,
+    use: (resolution: CustomSourceResolution) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
     const readySources = this.#sources.filter(source => source.available)
     if (readySources.length === 0) {
       throw new AppError('MUSIC_RESOLVER_UNAVAILABLE', 503, '音乐 URL 解析能力当前不可用')
@@ -126,9 +136,21 @@ export class CustomSourceManager {
     }
 
     const errors: unknown[] = []
+    let upstreamFailures = 0
     for (const candidate of candidates) {
       try {
-        return await candidate.source.resolveMusicUrl(track, requested, strict, signal)
+        const resolution = await candidate.source.resolveMusicUrl(track, requested, strict, signal)
+        try {
+          return await use(resolution)
+        } catch (error) {
+          signal?.throwIfAborted()
+          candidate.source.recordUpstreamFailure()
+          upstreamFailures += 1
+          this.#logger.warn({
+            code: error instanceof AppError ? error.code : 'AUDIO_UPSTREAM_FAILED',
+          }, '自定义源返回的音频不可用，将继续尝试兼容候选')
+          throw error
+        }
       } catch (error) {
         signal?.throwIfAborted()
         errors.push(error)
@@ -136,9 +158,11 @@ export class CustomSourceManager {
     }
     if (errors.length === 1) throw errors[0]
     throw new AppError(
-      'ALL_CUSTOM_SOURCES_FAILED',
+      upstreamFailures > 0 ? 'ALL_AUDIO_SOURCES_FAILED' : 'ALL_CUSTOM_SOURCES_FAILED',
       502,
-      `所有兼容自定义源均解析失败（已尝试 ${errors.length} 个）`,
+      upstreamFailures > 0
+        ? `所有兼容自定义源均未返回可用的完整音频（已尝试 ${errors.length} 个）`
+        : `所有兼容自定义源均解析失败（已尝试 ${errors.length} 个）`,
       true,
       { cause: errors.at(-1) },
     )

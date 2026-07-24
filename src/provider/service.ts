@@ -38,7 +38,7 @@ import mgLyric from '@renderer/utils/musicSdk/mg/lyric'
 import mgPic from '@renderer/utils/musicSdk/mg/pic'
 
 import { AppError, upstreamError } from '@app/api/errors'
-import { fromUpstreamTrack, toUpstreamTrack, type Provider, type Track } from '@app/domain/track'
+import { fromUpstreamTrack, parseTrackDurationSeconds, toUpstreamTrack, type Provider, type Track } from '@app/domain/track'
 import { runWithRequestSignal } from '@app/network/request-context'
 import { SerialExecutor } from '@app/utils/serial-executor'
 
@@ -160,11 +160,6 @@ const normalizeTracks = (items: unknown): Track[] => {
       return []
     }
   })
-}
-
-const intervalSeconds = (interval: string | null): number => {
-  if (!interval) return 0
-  return interval.split(':').reduce((total, part) => total * 60 + Number.parseInt(part, 10), 0)
 }
 
 const normalizeText = (value: string): string => value
@@ -383,13 +378,13 @@ export class ProviderService {
     const result = await this.searchTracks(`${track.name} ${track.singer}`.trim(), 'all', 1, 25, signal)
     const targetName = normalizeText(track.name)
     const targetSinger = normalizeText(track.singer.split(/[、&;；/,，|]/).sort().join('、'))
-    const targetInterval = intervalSeconds(track.interval)
+    const targetInterval = parseTrackDurationSeconds(track.interval) ?? 0
     return result.items
       .filter(candidate => candidate.source !== track.source)
       .map(candidate => {
         const name = normalizeText(candidate.name)
         const singer = normalizeText(candidate.singer.split(/[、&;；/,，|]/).sort().join('、'))
-        const interval = intervalSeconds(candidate.interval)
+        const interval = parseTrackDurationSeconds(candidate.interval) ?? 0
         const score = (name === targetName ? 8 : name.includes(targetName) || targetName.includes(name) ? 4 : 0) +
           (singer === targetSinger ? 4 : singer.includes(targetSinger) || targetSinger.includes(singer) ? 2 : 0) +
           (Math.abs(interval - targetInterval) < 5 ? 2 : 0)

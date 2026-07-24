@@ -1,20 +1,27 @@
 import fs from 'node:fs/promises'
+import http, { type Server } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { once } from 'node:events'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildApp } from '@app/app'
 import { getRequestSignal, requestTimeoutRouteConfig } from '@app/api/request-signal'
+import type { Track } from '@app/domain/track'
 import { ProviderService } from '@app/provider/service'
 import { createTestConfig, TEST_TRACK } from './helpers'
 
 const applications: FastifyInstance[] = []
 const directories: string[] = []
+const servers: Server[] = []
 
 afterEach(async () => {
   vi.restoreAllMocks()
   await Promise.all(applications.splice(0).map(application => application.close()))
+  await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => {
+    server.close(error => error ? reject(error) : resolve())
+  })))
   await Promise.all(directories.splice(0).map(directory => fs.rm(directory, { recursive: true, force: true })))
 })
 
@@ -28,6 +35,15 @@ const listen = async (app: FastifyInstance): Promise<string> => {
   await app.listen({ host: '127.0.0.1', port: 0 })
   const address = app.server.address()
   if (!address || typeof address === 'string') throw new Error('测试服务器未监听 TCP 端口')
+  return `http://127.0.0.1:${address.port}`
+}
+
+const listenAudioServer = async (server: Server): Promise<string> => {
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  servers.push(server)
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('音频测试服务器未监听 TCP 端口')
   return `http://127.0.0.1:${address.port}`
 }
 
@@ -47,6 +63,22 @@ lx.on(lx.EVENT_NAMES.request, async request => {
 lx.send(lx.EVENT_NAMES.inited, {
   sources: {
     kw: { type: 'music', actions: ['musicUrl'], qualitys: ${JSON.stringify(options.qualities)} },
+  },
+})
+`
+
+const multiProviderCustomSourceScript = (name: string, urls: { wy: string, kw: string }): string => `/**
+ * @name ${name}
+ * @version 1.0.0
+ */
+lx.on(lx.EVENT_NAMES.request, async request => {
+  if (request.action !== 'musicUrl') throw new Error('unsupported')
+  return request.source === 'wy' ? ${JSON.stringify(urls.wy)} : ${JSON.stringify(urls.kw)}
+})
+lx.send(lx.EVENT_NAMES.inited, {
+  sources: {
+    wy: { type: 'music', actions: ['musicUrl'], qualitys: ['128k'] },
+    kw: { type: 'music', actions: ['musicUrl'], qualitys: ['128k'] },
   },
 })
 `
@@ -197,6 +229,162 @@ lx.send(lx.EVENT_NAMES.inited, {
         qualityFallbackUsed: false,
       },
     })
+  })
+
+  it('音频内容疑似防盗链占位时自动尝试下一个兼容自定义源', async () => {
+    const badAudio = Buffer.alloc(185_336)
+    const goodAudio = Buffer.alloc(800_000, 1)
+    const hits: string[] = []
+    const audioServer = http.createServer((request, response) => {
+      const pathname = request.url ?? '/'
+      hits.push(pathname)
+      const body = pathname === '/bad' ? badAudio : goodAudio
+      response.writeHead(200, {
+        'content-type': 'audio/mpeg',
+        'content-length': String(body.length),
+      })
+      response.end(body)
+    })
+    const baseUrl = await listenAudioServer(audioServer)
+    const directory = await createDirectory()
+    const sourceDirectory = path.join(directory, 'sources')
+    const config = createTestConfig(directory)
+    config.custom_source.script_path = ''
+    config.custom_source.directory_path = sourceDirectory
+    config.music.allow_source_fallback = true
+    const findMatches = vi.spyOn(ProviderService.prototype, 'findMatches').mockResolvedValue([])
+    await fs.mkdir(sourceDirectory, { recursive: true })
+    await Promise.all([
+      fs.writeFile(path.join(sourceDirectory, 'a-placeholder.js'), customSourceScript({
+        name: '占位音频源',
+        qualities: ['128k'],
+        url: `${baseUrl}/bad`,
+      }), 'utf8'),
+      fs.writeFile(path.join(sourceDirectory, 'b-complete.js'), customSourceScript({
+        name: '完整音频源',
+        qualities: ['128k'],
+        url: `${baseUrl}/good`,
+      }), 'utf8'),
+    ])
+    const app = await buildApp(config)
+    applications.push(app)
+
+    const result = await app.inject({
+      method: 'POST',
+      url: '/v1/tracks/stream',
+      headers: { authorization: `Bearer ${config.auth.api_key}` },
+      payload: { track: { ...TEST_TRACK, interval: '03:33' }, quality: '128k' },
+    })
+
+    expect(result.statusCode, result.body).toBe(200)
+    expect(result.rawPayload).toEqual(goodAudio)
+    expect(hits).toEqual(['/bad', '/good'])
+    expect(findMatches).not.toHaveBeenCalled()
+  })
+
+  it('全部候选均返回占位音频时明确失败而不回传伪音频', async () => {
+    const placeholder = Buffer.alloc(185_336)
+    const audioServer = http.createServer((_request, response) => {
+      response.writeHead(200, {
+        'content-type': 'audio/mpeg',
+        'content-length': String(placeholder.length),
+      })
+      response.end(placeholder)
+    })
+    const baseUrl = await listenAudioServer(audioServer)
+    const directory = await createDirectory()
+    const sourceDirectory = path.join(directory, 'sources')
+    const config = createTestConfig(directory)
+    config.custom_source.script_path = ''
+    config.custom_source.directory_path = sourceDirectory
+    await fs.mkdir(sourceDirectory, { recursive: true })
+    await Promise.all(['a', 'b'].map(name => fs.writeFile(
+      path.join(sourceDirectory, `${name}.js`),
+      customSourceScript({ name, qualities: ['128k'], url: `${baseUrl}/${name}` }),
+      'utf8',
+    )))
+    const app = await buildApp(config)
+    applications.push(app)
+
+    const result = await app.inject({
+      method: 'POST',
+      url: '/v1/tracks/stream',
+      headers: { authorization: `Bearer ${config.auth.api_key}` },
+      payload: { track: { ...TEST_TRACK, interval: '03:33' }, quality: '128k' },
+    })
+
+    expect(result.statusCode, result.body).toBe(502)
+    expect(result.json()).toMatchObject({
+      error: {
+        code: 'ALL_AUDIO_SOURCES_FAILED',
+        message: '所有兼容自定义源均未返回可用的完整音频（已尝试 2 个）',
+      },
+    })
+    expect(result.rawPayload).not.toEqual(placeholder)
+  })
+
+  it('跨平台回退只在原平台的全部 ready 自定义源失败后开始', async () => {
+    const placeholder = Buffer.alloc(185_336)
+    const completeAudio = Buffer.alloc(800_000, 2)
+    const hits: string[] = []
+    const audioServer = http.createServer((request, response) => {
+      const pathname = request.url ?? '/'
+      hits.push(pathname)
+      const body = pathname.startsWith('/wy-') ? placeholder : completeAudio
+      response.writeHead(200, {
+        'content-type': 'audio/mpeg',
+        'content-length': String(body.length),
+      })
+      response.end(body)
+    })
+    const baseUrl = await listenAudioServer(audioServer)
+    const directory = await createDirectory()
+    const sourceDirectory = path.join(directory, 'sources')
+    const config = createTestConfig(directory)
+    config.custom_source.script_path = ''
+    config.custom_source.directory_path = sourceDirectory
+    config.music.allow_source_fallback = true
+    await fs.mkdir(sourceDirectory, { recursive: true })
+    await Promise.all(['a', 'b'].map(name => fs.writeFile(
+      path.join(sourceDirectory, `${name}.js`),
+      multiProviderCustomSourceScript(name, {
+        wy: `${baseUrl}/wy-${name}`,
+        kw: `${baseUrl}/kw-${name}`,
+      }),
+      'utf8',
+    )))
+    const fallbackTrack: Track = {
+      ...TEST_TRACK,
+      id: 'kw-fallback',
+      source: 'kw' as const,
+      interval: '03:33',
+      qualities: TEST_TRACK.qualities.map(quality => ({ ...quality })),
+      sourceData: { songId: 'fallback' },
+    }
+    vi.spyOn(ProviderService.prototype, 'findMatches').mockResolvedValue([fallbackTrack])
+    const app = await buildApp(config)
+    applications.push(app)
+    const originalTrack: Track = {
+      ...TEST_TRACK,
+      id: 'wy-original',
+      source: 'wy' as const,
+      interval: '03:33',
+      qualities: TEST_TRACK.qualities.map(quality => ({ ...quality })),
+      sourceData: { songId: 'original' },
+    }
+
+    const result = await app.inject({
+      method: 'POST',
+      url: '/v1/tracks/stream',
+      headers: { authorization: `Bearer ${config.auth.api_key}` },
+      payload: { track: originalTrack, quality: '128k' },
+    })
+
+    expect(result.statusCode, result.body).toBe(200)
+    expect(result.rawPayload).toEqual(completeAudio)
+    expect(hits).toHaveLength(3)
+    expect(hits.slice(0, 2).every(pathname => pathname.startsWith('/wy-'))).toBe(true)
+    expect(hits[2]).toMatch(/^\/kw-/)
   })
 
   it('路由超过配置时限时返回 504 并中止上游工作', async () => {

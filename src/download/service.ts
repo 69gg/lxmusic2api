@@ -10,7 +10,8 @@ import type Database from 'better-sqlite3'
 import type { AppConfig } from '@app/config/schema'
 import { AppError } from '@app/api/errors'
 import type { Quality, Track } from '@app/domain/track'
-import { openHttpStream, requestBuffer } from '@app/network/http-client'
+import { openValidatedAudioStream, validateFullAudioByteLength } from '@app/music/audio-stream'
+import { requestBuffer } from '@app/network/http-client'
 import type { MusicUrlService, ResolvedMusicUrl } from '@app/music/url-service'
 import type { ProviderService } from '@app/provider/service'
 import { buildLyrics, type LyricData } from './lrc.js'
@@ -318,7 +319,7 @@ export class DownloadService {
 
     const track = JSON.parse(row.track_json) as Track
     const partPath = path.join(this.#config.paths.downloads, `.lxmusic2api-${id}.part`)
-    let streamBody: Awaited<ReturnType<typeof openHttpStream>>['body'] | undefined
+    let streamBody: Awaited<ReturnType<typeof openValidatedAudioStream>>['body'] | undefined
     try {
       signal.throwIfAborted()
       await fsPromises.rm(partPath, { force: true })
@@ -333,17 +334,13 @@ export class DownloadService {
         return
       }
 
-      const response = await openHttpStream(resolved.url, { signal })
+      const response = await openValidatedAudioStream(resolved.url, {
+        signal,
+        expectedInterval: resolved.track.interval,
+        minimumBitrateKbps: this.#config.music.minimum_full_audio_bitrate_kbps,
+      })
       streamBody = response.body
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        await response.body.dump()
-        streamBody = undefined
-        throw new AppError('AUDIO_UPSTREAM_ERROR', 502, `音频上游返回 HTTP ${response.statusCode}`)
-      }
       const contentType = firstHeader(response.headers['content-type'])?.split(';', 1)[0]?.trim() ?? null
-      if (contentType && (contentType.startsWith('text/') || contentType === 'application/json')) {
-        throw new AppError('AUDIO_RESPONSE_INVALID', 502, `音频上游返回了非音频内容：${contentType}`)
-      }
       const contentLengthValue = Number.parseInt(firstHeader(response.headers['content-length']) ?? '', 10)
       const totalBytes = Number.isFinite(contentLengthValue) && contentLengthValue >= 0 ? contentLengthValue : null
       if (totalBytes != null && totalBytes > this.#config.download.max_file_bytes) {
@@ -377,6 +374,11 @@ export class DownloadService {
       })
       await pipeline(response.body, meter, fs.createWriteStream(partPath, { flags: 'wx' }), { signal })
       streamBody = undefined
+      validateFullAudioByteLength(
+        downloaded,
+        resolved.track.interval,
+        this.#config.music.minimum_full_audio_bitrate_kbps,
+      )
 
       const lyrics = await this.#loadLyrics(resolved.track, signal)
       await this.#writeMp3Metadata(partPath, extension, resolved.track, lyrics, signal)

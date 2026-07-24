@@ -48,9 +48,12 @@ allow_private_hosts = []
 
 [music]
 default_quality = "320k"
+# 只有原平台的全部兼容自定义源都失败后，才允许匹配并尝试其他平台。
 allow_source_fallback = false
 # 开启跨平台匹配时，最多尝试的候选歌曲数。
 max_fallback_candidates = 5
+# 完整音频的极低合理码率下限，用于按歌曲时长识别试听片段和防盗链占位音频；0 表示关闭。
+minimum_full_audio_bitrate_kbps = 16
 
 [custom_source]
 # 可同时配置一个显式脚本和一个脚本目录；留空表示不使用对应入口。

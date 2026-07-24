@@ -8,7 +8,7 @@ import { AppError } from './errors.js'
 import { TrackSchema } from '@app/domain/track'
 import { CreateDownloadSchema, DownloadJobSchema } from '@app/download/types'
 import type { DownloadService } from '@app/download/service'
-import { openHttpStream } from '@app/network/http-client'
+import { openValidatedAudioStream } from '@app/music/audio-stream'
 import type { MusicUrlService } from '@app/music/url-service'
 import type { ProviderService } from '@app/provider/service'
 import { getRequestSignal, requestTimeoutRouteConfig } from './request-signal.js'
@@ -210,17 +210,18 @@ export const registerApiRoutes = (app: FastifyInstance, services: ApiServices): 
     schema: secureSchema({ tags: ['audio'], summary: '代理音频流', body: ResolveBodySchema }),
   }, async (request, reply) => {
     const signal = getRequestSignal(request)
-    const resolved = await urls.resolve(
-      request.body.track, request.body.quality ?? config.music.default_quality,
-      request.body.strictQuality ?? false, signal,
-    )
     const range = typeof request.headers.range === 'string' ? request.headers.range : undefined
-    const upstream = await openHttpStream(resolved.url, { signal, headers: range ? { range } : {} })
-    if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
-      await upstream.body.dump()
-      if (upstream.statusCode === 416) throw new AppError('INVALID_RANGE', 416, '上游音频不接受该 Range')
-      throw new AppError('AUDIO_UPSTREAM_ERROR', 502, `音频上游返回 HTTP ${upstream.statusCode}`)
-    }
+    const { value: upstream } = await urls.resolveAndUse(
+      request.body.track, request.body.quality ?? config.music.default_quality,
+      request.body.strictQuality ?? false,
+      resolved => openValidatedAudioStream(resolved.url, {
+        signal,
+        headers: range ? { range } : {},
+        expectedInterval: resolved.track.interval,
+        minimumBitrateKbps: config.music.minimum_full_audio_bitrate_kbps,
+      }),
+      signal,
+    )
     for (const header of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified'] as const) {
       const value = upstream.headers[header]
       if (value != null) reply.header(header, value)

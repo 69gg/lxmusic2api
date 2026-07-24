@@ -47,6 +47,7 @@ directory_path = "./private/sources"
     expect(loaded.config.paths.database).toBe(path.join(directory, 'state/app.sqlite'))
     expect(loaded.config.custom_source.script_path).toBe(path.join(directory, 'private/source.js'))
     expect(loaded.config.custom_source.directory_path).toBe(path.join(directory, 'private/sources'))
+    expect(loaded.config.music.minimum_full_audio_bitrate_kbps).toBe(16)
   })
 
   it('允许留空单文件路径并仅使用目录', async () => {

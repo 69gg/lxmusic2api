@@ -69,6 +69,17 @@ const toDisplayString = (value: unknown): string => {
 
 export const isProvider = (value: unknown): value is Provider => typeof value === 'string' && PROVIDERS.has(value as Provider)
 
+export const parseTrackDurationSeconds = (interval: string | null): number | null => {
+  if (!interval) return null
+  const parts = interval.trim().split(':')
+  if (parts.length < 2 || parts.length > 3 || parts.some(part => !/^\d+$/.test(part))) return null
+  const values = parts.map(part => Number.parseInt(part, 10))
+  if (values.some(value => !Number.isSafeInteger(value))) return null
+  if (values.slice(1).some(value => value >= 60)) return null
+  const seconds = values.reduce((total, value) => total * 60 + value, 0)
+  return seconds > 0 ? seconds : null
+}
+
 export const fromUpstreamTrack = (raw: Record<string, unknown>): Track => {
   if (!isProvider(raw.source)) throw new Error('上游返回了不支持的平台')
   const source = raw.source

@@ -45,6 +45,7 @@ describe('持久化下载服务', () => {
     config.download.embed_lyric = false
     config.download.save_lrc = false
     config.download.existing_file = 'rename'
+    config.music.minimum_full_audio_bitrate_kbps = 0
 
     vi.mocked(openHttpStream).mockResolvedValue({
       statusCode: 200,
@@ -93,6 +94,46 @@ describe('持久化下载服务', () => {
     await restarted.initialize()
     expect(restarted.get(created.id).state).toBe('paused')
     await restarted.close()
+    database.close()
+  })
+
+  it('拒绝把与歌曲时长明显不符的短音频保存为下载结果', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'lxmusic2api-download-'))
+    directories.push(directory)
+    const config = createTestConfig(directory)
+    config.download.embed_cover = false
+    config.download.embed_lyric = false
+    config.download.save_lrc = false
+
+    vi.mocked(openHttpStream).mockResolvedValue({
+      statusCode: 200,
+      headers: { 'content-type': 'audio/mpeg', 'content-length': '185336' },
+      body: Readable.from([]) as unknown as HttpStreamResponse['body'],
+      finalUrl: new URL('https://audio.invalid/placeholder.mp3'),
+    })
+
+    const track: Track = { ...FLAC_TRACK, interval: '03:33' }
+    const urls = {
+      resolve: vi.fn(() => Promise.resolve({
+        url: 'https://audio.invalid/placeholder.mp3',
+        track,
+        requestedQuality: 'flac',
+        resolvedQuality: 'flac',
+        qualityFallbackUsed: false,
+        sourceFallbackUsed: false,
+      })),
+    } as unknown as MusicUrlService
+    const logger = { error: vi.fn(), warn: vi.fn() } as unknown as FastifyBaseLogger
+    const database = new AppDatabase(config.paths.database)
+    const service = new DownloadService(config, database.connection, urls, {} as ProviderService, logger)
+    await service.initialize()
+
+    const created = service.create({ track, quality: 'flac', strictQuality: true })
+    await expect.poll(() => service.get(created.id).state).toBe('failed')
+    expect(service.get(created.id).error).toMatchObject({ code: 'AUDIO_RESPONSE_SUSPICIOUS' })
+    expect(await fs.readdir(config.paths.downloads)).toEqual([])
+
+    await service.close()
     database.close()
   })
 })
